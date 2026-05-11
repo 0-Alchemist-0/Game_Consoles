@@ -1,10 +1,27 @@
+// ============================================================================
+// CHANGELOG
+// ============================================================================
+// 2026-05-11 15:35 +02:00 - Enabled inverted display colors through a dedicated
+// display setting.
+// 2026-05-11 15:27 +02:00 - Added microSD support and a 24-bit BMP boot intro
+// player while keeping local and WiFi gameplay modes.
+// 2026-05-11 14:58 +02:00 - Removed the duplicate sketch compile conflict by
+// keeping Game_Consoles.ino as the active Arduino sketch file.
+// 2026-05-11 14:49 +02:00 - Rebuilt the sketch with a clean structure while
+// keeping local play, WiFi host/join play, persistent score, touch input, and UI.
+// 2026-05-11 14:18 +02:00 - Added local play mode with a main menu option,
+// allowing X and O to play on the same device without WiFi.
+
 #include <Arduino_GFX_Library.h>
 #include <Wire.h>
 #include <WiFi.h>
 #include <Preferences.h>
+#include <SPI.h>
+#include <SD.h>
+#include <FS.h>
 
 // ============================================================================
-// CONFIG HARDWARE
+// HARDWARE CONFIG
 // ============================================================================
 static const int PIN_LCD_CS   = 21;
 static const int PIN_LCD_DC   = 18;
@@ -14,18 +31,21 @@ static const int PIN_LCD_MOSI = 38;
 static const int PIN_LCD_MISO = 47;
 static const int PIN_LCD_SCLK = 48;
 
+static const int PIN_SD_CS    = 8;
+static const int SD_SPI_FREQ  = 1000000;
+
 static const int PIN_TP_INT   = 6;
 static const int PIN_TP_RST   = 7;
 
 static const int PIN_SDA      = 11;
 static const int PIN_SCL      = 12;
 
-static const int PIN_BUZZER   = 5;
+static const int PIN_BUZZER   = 4;
 
 static const uint8_t FT6336_ADDR = 0x38;
 
 // ============================================================================
-// WIFI NETWORK CONFIG
+// NETWORK CONFIG
 // ============================================================================
 const char *AP_SSID = "TicTacToe_ESP32";
 const char *AP_PASS = "12345678";
@@ -36,15 +56,11 @@ IPAddress HOST_IP(192, 168, 4, 1);
 WiFiServer gameServer(NET_PORT);
 WiFiClient netClient;
 
-bool isHost = false;
-bool networkConnected = false;
-char myPlayer = ' ';
-bool myTurn = false;
-
 // ============================================================================
-// DISPLAY / MEMORY
+// DISPLAY / STORAGE
 // ============================================================================
 Preferences prefs;
+const bool INVERT_DISPLAY_COLORS = true;
 
 Arduino_DataBus *bus = new Arduino_HWSPI(
   PIN_LCD_DC,
@@ -56,8 +72,10 @@ Arduino_DataBus *bus = new Arduino_HWSPI(
 
 Arduino_GFX *gfx = new Arduino_ILI9488_18bit(bus, PIN_LCD_RST, 0, false);
 
+bool sdReady = false;
+
 // ============================================================================
-// GAME STATE
+// APP STATE
 // ============================================================================
 enum AppState {
   STATE_MENU,
@@ -74,34 +92,52 @@ char currentPlayer = 'X';
 bool gameOver = false;
 char winner = ' ';
 
+bool localGame = false;
+bool isHost = false;
+bool networkConnected = false;
+char myPlayer = ' ';
+bool myTurn = false;
+
 int scoreX = 0;
 int scoreO = 0;
 int scoreDraw = 0;
 
+bool touchWasDown = false;
+unsigned long lastTouchTime = 0;
+const unsigned long touchDebounceMs = 80;
+
+// ============================================================================
+// LAYOUT
+// ============================================================================
 const int screenW = 320;
 const int screenH = 480;
+
+const int topBarH = 90;
 
 const int boardX = 20;
 const int boardY = 110;
 const int boardSize = 280;
 const int cellSize = boardSize / 3;
 
-const int topBarH = 90;
+const int btnLocalX = 60;
+const int btnLocalY = 185;
+const int btnLocalW = 200;
+const int btnLocalH = 45;
 
 const int btnHostX = 60;
-const int btnHostY = 215;
+const int btnHostY = 245;
 const int btnHostW = 200;
-const int btnHostH = 50;
+const int btnHostH = 45;
 
 const int btnJoinX = 60;
-const int btnJoinY = 280;
+const int btnJoinY = 305;
 const int btnJoinW = 200;
-const int btnJoinH = 50;
+const int btnJoinH = 45;
 
 const int btnResetScoreX = 60;
-const int btnResetScoreY = 345;
+const int btnResetScoreY = 365;
 const int btnResetScoreW = 200;
-const int btnResetScoreH = 50;
+const int btnResetScoreH = 45;
 
 const int btnMenuX = 90;
 const int btnMenuY = 420;
@@ -118,12 +154,151 @@ const int btnResultMenuY = 390;
 const int btnResultMenuW = 220;
 const int btnResultMenuH = 45;
 
-unsigned long lastTouchTime = 0;
-const unsigned long touchDebounceMs = 80;
-bool touchWasDown = false;
+// ============================================================================
+// BMP VIDEO PLAYER
+// ============================================================================
+uint16_t read16(File &f) {
+  uint16_t result;
+  ((uint8_t *)&result)[0] = f.read();
+  ((uint8_t *)&result)[1] = f.read();
+  return result;
+}
+
+uint32_t read32(File &f) {
+  uint32_t result;
+  ((uint8_t *)&result)[0] = f.read();
+  ((uint8_t *)&result)[1] = f.read();
+  ((uint8_t *)&result)[2] = f.read();
+  ((uint8_t *)&result)[3] = f.read();
+  return result;
+}
+
+uint16_t rgb888to565(uint8_t r, uint8_t g, uint8_t b) {
+  return ((r & 0xF8) << 8) |
+         ((g & 0xFC) << 3) |
+         (b >> 3);
+}
+
+bool drawBmpFromSD(const char *filename, int16_t x, int16_t y) {
+  File bmpFile = SD.open(filename);
+
+  if (!bmpFile) {
+    Serial.print("Cannot open BMP: ");
+    Serial.println(filename);
+    return false;
+  }
+
+  if (read16(bmpFile) != 0x4D42) {
+    Serial.println("Invalid BMP file.");
+    bmpFile.close();
+    return false;
+  }
+
+  read32(bmpFile);
+  read32(bmpFile);
+  uint32_t bmpImageOffset = read32(bmpFile);
+
+  read32(bmpFile);
+  int32_t bmpWidth = read32(bmpFile);
+  int32_t bmpHeight = read32(bmpFile);
+
+  if (read16(bmpFile) != 1) {
+    bmpFile.close();
+    return false;
+  }
+
+  uint16_t bitDepth = read16(bmpFile);
+
+  if (bitDepth != 24) {
+    Serial.println("BMP must be 24-bit.");
+    bmpFile.close();
+    return false;
+  }
+
+  uint32_t compression = read32(bmpFile);
+
+  if (compression != 0) {
+    Serial.println("BMP must be uncompressed.");
+    bmpFile.close();
+    return false;
+  }
+
+  bool flip = true;
+
+  if (bmpHeight < 0) {
+    bmpHeight = -bmpHeight;
+    flip = false;
+  }
+
+  uint32_t rowSize = (bmpWidth * 3 + 3) & ~3;
+
+  static uint8_t sdbuffer[480 * 3];
+  static uint16_t linebuffer[480];
+
+  if (bmpWidth > 480) {
+    Serial.println("BMP is too wide for the buffer.");
+    bmpFile.close();
+    return false;
+  }
+
+  for (int row = 0; row < bmpHeight; row++) {
+    uint32_t pos;
+
+    if (flip) {
+      pos = bmpImageOffset + (bmpHeight - 1 - row) * rowSize;
+    } else {
+      pos = bmpImageOffset + row * rowSize;
+    }
+
+    bmpFile.seek(pos);
+    bmpFile.read(sdbuffer, bmpWidth * 3);
+
+    for (int col = 0; col < bmpWidth; col++) {
+      uint8_t b = sdbuffer[col * 3 + 0];
+      uint8_t g = sdbuffer[col * 3 + 1];
+      uint8_t r = sdbuffer[col * 3 + 2];
+
+      linebuffer[col] = rgb888to565(r, g, b);
+    }
+
+    gfx->draw16bitRGBBitmap(x, y + row, linebuffer, bmpWidth, 1);
+  }
+
+  bmpFile.close();
+  return true;
+}
+
+void playVideo(const char *folder, int totalFrames, int frameDelayMs) {
+  if (!sdReady) return;
+
+  char path[64];
+
+  for (int i = 1; i <= totalFrames; i++) {
+    snprintf(path, sizeof(path), "%s/frame_%03d.bmp", folder, i);
+
+    unsigned long frameStart = millis();
+    drawBmpFromSD(path, 0, 0);
+
+    unsigned long used = millis() - frameStart;
+
+    if (used < (unsigned long)frameDelayMs) {
+      delay(frameDelayMs - used);
+    }
+  }
+}
+
+void playBootIntro() {
+  gfx->setRotation(1);
+  gfx->fillScreen(RGB565_BLACK);
+
+  playVideo("/intro", 75, 66);
+
+  gfx->setRotation(0);
+  gfx->fillScreen(RGB565_BLACK);
+}
 
 // ============================================================================
-// SCORE PERSISTENT
+// SCORE STORAGE
 // ============================================================================
 void loadScore() {
   prefs.begin("ttt_score", true);
@@ -139,6 +314,13 @@ void saveScore() {
   prefs.putInt("o", scoreO);
   prefs.putInt("d", scoreDraw);
   prefs.end();
+}
+
+void resetScore() {
+  scoreX = 0;
+  scoreO = 0;
+  scoreDraw = 0;
+  saveScore();
 }
 
 // ============================================================================
@@ -246,14 +428,7 @@ void resetGameLogic() {
   currentPlayer = 'X';
   gameOver = false;
   winner = ' ';
-  myTurn = (myPlayer == 'X');
-}
-
-void resetScore() {
-  scoreX = 0;
-  scoreO = 0;
-  scoreDraw = 0;
-  saveScore();
+  myTurn = localGame || (myPlayer == 'X');
 }
 
 bool boardFull() {
@@ -301,7 +476,7 @@ char checkWinner() {
 }
 
 // ============================================================================
-// DRAW GAME
+// GAME DRAWING
 // ============================================================================
 void drawX(int cx, int cy) {
   int margin = 20;
@@ -357,35 +532,43 @@ void drawScoreBar() {
   gfx->fillRect(0, 0, screenW, topBarH, RGB565_BLACK);
   gfx->drawLine(0, topBarH - 1, screenW, topBarH - 1, RGB565_WHITE);
 
-  char line1[48];
-  snprintf(line1, sizeof(line1), "Scor X:%d  O:%d  E:%d", scoreX, scoreO, scoreDraw);
-  drawCenteredText(line1, 10, 2, RGB565_WHITE);
+  char scoreLine[48];
+  snprintf(scoreLine, sizeof(scoreLine), "Scor X:%d  O:%d  E:%d", scoreX, scoreO, scoreDraw);
+  drawCenteredText(scoreLine, 10, 2, RGB565_WHITE);
 
-  char line2[48];
+  char turnLine[48];
 
   if (gameOver) {
-    snprintf(line2, sizeof(line2), "Joc terminat");
+    snprintf(turnLine, sizeof(turnLine), "Joc terminat");
+  } else if (localGame) {
+    snprintf(turnLine, sizeof(turnLine), "Randul: %c", currentPlayer);
   } else if (myTurn) {
-    snprintf(line2, sizeof(line2), "Randul tau: %c", myPlayer);
+    snprintf(turnLine, sizeof(turnLine), "Randul tau: %c", myPlayer);
   } else {
-    snprintf(line2, sizeof(line2), "Asteapta: %c", currentPlayer);
+    snprintf(turnLine, sizeof(turnLine), "Asteapta: %c", currentPlayer);
   }
 
-  drawCenteredText(line2, 42, 2, myTurn ? RGB565_GREEN : RGB565_YELLOW);
+  drawCenteredText(turnLine, 42, 2, (localGame || myTurn) ? RGB565_GREEN : RGB565_YELLOW);
 }
 
+// ============================================================================
+// SCREENS
+// ============================================================================
 void drawMenuScreen() {
   gfx->fillScreen(RGB565_BLACK);
 
   drawCenteredText("TIC TAC TOE", 35, 3, RGB565_WHITE);
-  drawCenteredText("NETWORK MODE", 75, 2, RGB565_CYAN);
+  drawCenteredText("LOCAL / NETWORK", 75, 2, RGB565_CYAN);
 
   char scoreLine[48];
   snprintf(scoreLine, sizeof(scoreLine), "X:%d   O:%d   E:%d", scoreX, scoreO, scoreDraw);
   drawCenteredText(scoreLine, 145, 2, RGB565_YELLOW);
 
+  drawButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "LOCAL", 2);
+
   drawButton(btnHostX, btnHostY, btnHostW, btnHostH,
-             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "HOST - X", 2);
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "HOST - X", 2);
 
   drawButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "JOIN - O", 2);
@@ -446,9 +629,9 @@ void drawResultScreen() {
     drawCenteredText("Egalitate!", 110, 3, RGB565_YELLOW);
   }
 
-  char line[48];
-  snprintf(line, sizeof(line), "X:%d   O:%d   E:%d", scoreX, scoreO, scoreDraw);
-  drawCenteredText(line, 210, 2, RGB565_WHITE);
+  char scoreLine[48];
+  snprintf(scoreLine, sizeof(scoreLine), "X:%d   O:%d   E:%d", scoreX, scoreO, scoreDraw);
+  drawCenteredText(scoreLine, 210, 2, RGB565_WHITE);
 
   drawButton(btnPlayAgainX, btnPlayAgainY, btnPlayAgainW, btnPlayAgainH,
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "JOACA DIN NOU", 2);
@@ -481,9 +664,21 @@ void stopNetwork() {
   myTurn = false;
 }
 
+void startLocalGame() {
+  stopNetwork();
+
+  localGame = true;
+  resetGameLogic();
+
+  appState = STATE_PLAYING;
+  beepStart();
+  drawGameScreenFull();
+}
+
 void startHostMode() {
   stopNetwork();
 
+  localGame = false;
   isHost = true;
   myPlayer = 'X';
   myTurn = true;
@@ -500,6 +695,7 @@ void startHostMode() {
 void startJoinMode() {
   stopNetwork();
 
+  localGame = false;
   isHost = false;
   myPlayer = 'O';
   myTurn = false;
@@ -512,7 +708,9 @@ void startJoinMode() {
 }
 
 void startNetworkGame() {
+  localGame = false;
   resetGameLogic();
+
   appState = STATE_PLAYING;
   beepStart();
   drawGameScreenFull();
@@ -546,7 +744,31 @@ void checkJoinConnection() {
   }
 }
 
-void applyMove(int col, int row, bool localMove) {
+// ============================================================================
+// GAME ACTIONS
+// ============================================================================
+void finishGame(char result) {
+  gameOver = true;
+  winner = result;
+
+  if (winner == 'X') {
+    scoreX++;
+    beepWin();
+  } else if (winner == 'O') {
+    scoreO++;
+    beepWin();
+  } else if (winner == 'D') {
+    scoreDraw++;
+    beepDraw();
+  }
+
+  saveScore();
+
+  appState = STATE_RESULT;
+  drawResultScreen();
+}
+
+void applyMove(int col, int row) {
   if (gameOver) return;
   if (col < 0 || col > 2 || row < 0 || row > 2) return;
   if (board[row][col] != ' ') return;
@@ -560,33 +782,50 @@ void applyMove(int col, int row, bool localMove) {
   char result = checkWinner();
 
   if (result != ' ') {
-    gameOver = true;
-    winner = result;
-
-    if (winner == 'X') {
-      scoreX++;
-      beepWin();
-    } else if (winner == 'O') {
-      scoreO++;
-      beepWin();
-    } else if (winner == 'D') {
-      scoreDraw++;
-      beepDraw();
-    }
-
-    saveScore();
-
-    appState = STATE_RESULT;
-    drawResultScreen();
+    finishGame(result);
     return;
   }
 
   currentPlayer = (currentPlayer == 'X') ? 'O' : 'X';
-  myTurn = (currentPlayer == myPlayer);
+  myTurn = localGame || (currentPlayer == myPlayer);
 
   drawScoreBar();
 }
 
+void handleBoardTouch(int x, int y) {
+  if (!localGame && !networkConnected) return;
+  if (!localGame && !myTurn) return;
+  if (!inBoard(x, y) || gameOver) return;
+
+  int col = (x - boardX) / cellSize;
+  int row = (y - boardY) / cellSize;
+
+  if (row < 0 || row > 2 || col < 0 || col > 2) return;
+  if (board[row][col] != ' ') return;
+
+  if (!localGame) {
+    String msg = "MOVE:" + String(col) + "," + String(row);
+    sendNetMessage(msg);
+  }
+
+  applyMove(col, row);
+}
+
+void returnToMenu(bool notifyPeer) {
+  if (notifyPeer && !localGame) {
+    sendNetMessage("LEAVE");
+  }
+
+  localGame = false;
+  stopNetwork();
+
+  appState = STATE_MENU;
+  drawMenuScreen();
+}
+
+// ============================================================================
+// NETWORK MESSAGES
+// ============================================================================
 void handleNetMessage(String msg) {
   msg.trim();
 
@@ -601,9 +840,7 @@ void handleNetMessage(String msg) {
   }
 
   if (msg == "LEAVE") {
-    stopNetwork();
-    appState = STATE_MENU;
-    drawMenuScreen();
+    returnToMenu(false);
     return;
   }
 
@@ -614,10 +851,8 @@ void handleNetMessage(String msg) {
       int col = msg.substring(5, comma).toInt();
       int row = msg.substring(comma + 1).toInt();
 
-      applyMove(col, row, false);
+      applyMove(col, row);
     }
-
-    return;
   }
 }
 
@@ -631,9 +866,7 @@ void pollNetwork() {
       gfx->fillScreen(RGB565_BLACK);
       drawCenteredText("Conexiune pierduta", 180, 2, RGB565_RED);
       delay(1200);
-      stopNetwork();
-      appState = STATE_MENU;
-      drawMenuScreen();
+      returnToMenu(false);
     }
 
     return;
@@ -646,29 +879,14 @@ void pollNetwork() {
 }
 
 // ============================================================================
-// GAME ACTIONS
-// ============================================================================
-void handleBoardTouch(int x, int y) {
-  if (!networkConnected) return;
-  if (!myTurn) return;
-  if (!inBoard(x, y) || gameOver) return;
-
-  int col = (x - boardX) / cellSize;
-  int row = (y - boardY) / cellSize;
-
-  if (row < 0 || row > 2 || col < 0 || col > 2) return;
-  if (board[row][col] != ' ') return;
-
-  String msg = "MOVE:" + String(col) + "," + String(row);
-  sendNetMessage(msg);
-
-  applyMove(col, row, true);
-}
-
-// ============================================================================
 // TOUCH ROUTING
 // ============================================================================
 void handleMenuTouch(int x, int y) {
+  if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
+    startLocalGame();
+    return;
+  }
+
   if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
     beepStart();
     startHostMode();
@@ -692,19 +910,14 @@ void handleMenuTouch(int x, int y) {
 void handleWaitingTouch(int x, int y) {
   if (inRect(x, y, btnMenuX, btnMenuY, btnMenuW, btnMenuH)) {
     beepClick();
-    stopNetwork();
-    appState = STATE_MENU;
-    drawMenuScreen();
+    returnToMenu(false);
   }
 }
 
 void handlePlayingTouch(int x, int y) {
   if (inRect(x, y, btnMenuX, btnMenuY, btnMenuW, btnMenuH)) {
     beepClick();
-    sendNetMessage("LEAVE");
-    stopNetwork();
-    appState = STATE_MENU;
-    drawMenuScreen();
+    returnToMenu(true);
     return;
   }
 
@@ -713,18 +926,20 @@ void handlePlayingTouch(int x, int y) {
 
 void handleResultTouch(int x, int y) {
   if (inRect(x, y, btnPlayAgainX, btnPlayAgainY, btnPlayAgainW, btnPlayAgainH)) {
-    beepStart();
-    sendNetMessage("NEW");
-    startNetworkGame();
+    if (localGame) {
+      startLocalGame();
+    } else {
+      beepStart();
+      sendNetMessage("NEW");
+      startNetworkGame();
+    }
+
     return;
   }
 
   if (inRect(x, y, btnResultMenuX, btnResultMenuY, btnResultMenuW, btnResultMenuH)) {
     beepClick();
-    sendNetMessage("LEAVE");
-    stopNetwork();
-    appState = STATE_MENU;
-    drawMenuScreen();
+    returnToMenu(true);
     return;
   }
 }
@@ -769,15 +984,33 @@ void setup() {
   Wire.setClock(400000);
 
   if (!gfx->begin()) {
-    Serial.println("Eroare: Initializarea GFX a esuat!");
+    Serial.println("Error: GFX initialization failed!");
     while (1) delay(100);
   }
 
+  gfx->invertDisplay(INVERT_DISPLAY_COLORS);
+  gfx->setRotation(0);
   gfx->fillScreen(RGB565_BLACK);
+
+  pinMode(PIN_LCD_CS, OUTPUT);
+  digitalWrite(PIN_LCD_CS, HIGH);
+
+  pinMode(PIN_SD_CS, OUTPUT);
+  digitalWrite(PIN_SD_CS, HIGH);
+
+  SPI.begin(PIN_LCD_SCLK, PIN_LCD_MISO, PIN_LCD_MOSI, -1);
+
+  if (!SD.begin(PIN_SD_CS, SPI, SD_SPI_FREQ)) {
+    Serial.println("Error: microSD initialization failed.");
+    sdReady = false;
+  } else {
+    Serial.println("microSD OK");
+    sdReady = true;
+    playBootIntro();
+  }
 
   loadScore();
   clearBoard();
-
   WiFi.mode(WIFI_OFF);
 
   drawMenuScreen();
