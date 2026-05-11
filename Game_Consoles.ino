@@ -1,6 +1,10 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// 2026-05-11 22:06 +02:00 - Moved the Tic Tac Toe Home button to the game mode
+// menu page with Local, Host, Join, and Reset Score.
+// 2026-05-11 22:02 +02:00 - Added a dedicated Home button for Tic Tac Toe
+// screens to return directly to the SD-loaded home screen.
 // 2026-05-11 19:41 +02:00 - Changed the home screen Exit button to reboot the
 // ESP32 instead of blanking the display.
 // 2026-05-11 19:33 +02:00 - Scaled the home screen RAW buttons to fit the
@@ -170,6 +174,11 @@ const int btnResultMenuX = 50;
 const int btnResultMenuY = 390;
 const int btnResultMenuW = 220;
 const int btnResultMenuH = 45;
+
+const int btnTttHomeX = 60;
+const int btnTttHomeY = 420;
+const int btnTttHomeW = 200;
+const int btnTttHomeH = 45;
 
 const int homeButtonRawW = 320;
 const int homeButtonRawH = 90;
@@ -629,6 +638,9 @@ void drawMenuScreen() {
 
   drawButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH,
              RGB565_RED, RGB565_WHITE, RGB565_WHITE, "RESET SCOR", 2);
+
+  drawButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "HOME", 2);
 }
 
 void drawWaitingHostScreen() {
@@ -939,6 +951,17 @@ void returnToMenu(bool notifyPeer) {
   drawMenuScreen();
 }
 
+void returnToHome(bool notifyPeer) {
+  if (notifyPeer && !localGame) {
+    sendNetMessage("LEAVE");
+  }
+
+  localGame = false;
+  stopNetwork();
+
+  drawHomeScreen();
+}
+
 // ============================================================================
 // NETWORK MESSAGES
 // ============================================================================
@@ -1019,6 +1042,12 @@ void handleMenuTouch(int x, int y) {
     beepClick();
     resetScore();
     drawMenuScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH)) {
+    beepClick();
+    returnToHome(false);
     return;
   }
 }
