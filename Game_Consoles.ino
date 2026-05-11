@@ -1,8 +1,6 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
-// 2026-05-11 15:50 +02:00 - Replaced the BMP boot intro player with a RAW565
-// video player using /intro/frame_001.raw through /intro/frame_075.raw.
 // 2026-05-11 15:35 +02:00 - Enabled inverted display colors through a dedicated
 // display setting.
 // 2026-05-11 15:27 +02:00 - Added microSD support and a 24-bit BMP boot intro
@@ -157,10 +155,7 @@ const int btnResultMenuW = 220;
 const int btnResultMenuH = 45;
 
 // ============================================================================
-// RAW565 VIDEO PLAYER - /intro/frame_001.raw ... /intro/frame_075.raw
 // ============================================================================
-static const int VIDEO_W = 480;
-static const int VIDEO_H = 320;
 static const int RAW_BLOCK_LINES = 32;
 static const int RAW_FRAME_SIZE = VIDEO_W * VIDEO_H * 2;
 
@@ -216,7 +211,6 @@ void playVideoRaw(const char *folder, int totalFrames, int targetFps) {
   char path[64];
   unsigned long frameTime = 1000UL / targetFps;
 
-  for (int i = 1; i <= totalFrames; i++) {
     unsigned long frameStart = millis();
 
     snprintf(path, sizeof(path), "%s/frame_%03d.raw", folder, i);
@@ -231,11 +225,9 @@ void playVideoRaw(const char *folder, int totalFrames, int targetFps) {
 }
 
 void playBootIntro() {
-  gfx->setRotation(1);
   gfx->fillScreen(RGB565_BLACK);
 
   delay(50);
-  playVideoRaw("/intro", 75, 65);
 
   gfx->setRotation(0);
   gfx->fillScreen(RGB565_BLACK);
@@ -909,12 +901,6 @@ void setup() {
 
   pinMode(PIN_BUZZER, OUTPUT);
 
-  pinMode(PIN_LCD_CS, OUTPUT);
-  digitalWrite(PIN_LCD_CS, HIGH);
-
-  pinMode(PIN_SD_CS, OUTPUT);
-  digitalWrite(PIN_SD_CS, HIGH);
-
   pinMode(PIN_LCD_RST, OUTPUT);
   digitalWrite(PIN_LCD_RST, HIGH);
   delay(100);
@@ -954,10 +940,8 @@ void setup() {
     Serial.println("microSD OK");
     sdReady = true;
 
-    if (SD.exists("/intro/frame_001.raw")) {
       playBootIntro();
     } else {
-      Serial.println("Missing /intro/frame_001.raw");
     }
   }
 
