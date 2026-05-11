@@ -1,6 +1,12 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// 2026-05-11 18:40 +02:00 - Added a 4 second hold on frame_000.raw before the
+// rest of the RAW intro animation plays.
+// 2026-05-11 18:05 +02:00 - Set RAW intro playback back to normal portrait
+// rotation because frame_000.raw was displayed upside down.
+// 2026-05-11 17:51 +02:00 - Replaced the intro player with RAW565 portrait
+// playback, starting from frame_000.raw, using alternate portrait rotation.
 // 2026-05-11 15:35 +02:00 - Enabled inverted display colors through a dedicated
 // display setting.
 // 2026-05-11 15:27 +02:00 - Added microSD support and a 24-bit BMP boot intro
@@ -43,6 +49,8 @@ static const int PIN_SCL      = 12;
 static const int PIN_BUZZER   = 4;
 
 static const uint8_t FT6336_ADDR = 0x38;
+
+
 
 // ============================================================================
 // NETWORK CONFIG
@@ -155,9 +163,17 @@ const int btnResultMenuW = 220;
 const int btnResultMenuH = 45;
 
 // ============================================================================
+// RAW565 VIDEO PLAYER - /intro/frame_000.raw ... /intro/frame_074.raw
 // ============================================================================
+static const int VIDEO_W = 320;
+static const int VIDEO_H = 480;
 static const int RAW_BLOCK_LINES = 32;
 static const int RAW_FRAME_SIZE = VIDEO_W * VIDEO_H * 2;
+static const int INTRO_FIRST_FRAME = 0;
+static const int INTRO_TOTAL_FRAMES = 75;
+static const int INTRO_TARGET_FPS = 65;
+static const int INTRO_ROTATION = 0;
+static const unsigned long INTRO_FIRST_FRAME_HOLD_MS = 4000;
 
 static uint16_t rawDrawBuffer[VIDEO_W * RAW_BLOCK_LINES];
 
@@ -210,11 +226,17 @@ void playVideoRaw(const char *folder, int totalFrames, int targetFps) {
 
   char path[64];
   unsigned long frameTime = 1000UL / targetFps;
+  int lastFrame = INTRO_FIRST_FRAME + totalFrames - 1;
 
+  for (int i = INTRO_FIRST_FRAME; i <= lastFrame; i++) {
     unsigned long frameStart = millis();
 
     snprintf(path, sizeof(path), "%s/frame_%03d.raw", folder, i);
     drawRaw565FromSD(path, 0, 0);
+
+    if (i == INTRO_FIRST_FRAME) {
+      delay(INTRO_FIRST_FRAME_HOLD_MS);
+    }
 
     unsigned long used = millis() - frameStart;
 
@@ -225,9 +247,11 @@ void playVideoRaw(const char *folder, int totalFrames, int targetFps) {
 }
 
 void playBootIntro() {
+  gfx->setRotation(INTRO_ROTATION);
   gfx->fillScreen(RGB565_BLACK);
 
   delay(50);
+  playVideoRaw("/intro", INTRO_TOTAL_FRAMES, INTRO_TARGET_FPS);
 
   gfx->setRotation(0);
   gfx->fillScreen(RGB565_BLACK);
@@ -928,7 +952,10 @@ void setup() {
   gfx->setRotation(0);
   gfx->fillScreen(RGB565_BLACK);
 
+  pinMode(PIN_LCD_CS, OUTPUT);
   digitalWrite(PIN_LCD_CS, HIGH);
+
+  pinMode(PIN_SD_CS, OUTPUT);
   digitalWrite(PIN_SD_CS, HIGH);
 
   SPI.begin(PIN_LCD_SCLK, PIN_LCD_MISO, PIN_LCD_MOSI, -1);
@@ -940,8 +967,10 @@ void setup() {
     Serial.println("microSD OK");
     sdReady = true;
 
+    if (SD.exists("/intro/frame_000.raw")) {
       playBootIntro();
     } else {
+      Serial.println("Missing /intro/frame_000.raw");
     }
   }
 
