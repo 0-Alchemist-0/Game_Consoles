@@ -1,0 +1,3 @@
+https://docs.arduino.cc/hardware/nano/
+
+https://www.waveshare.com/3.5inch-capacitive-touch-lcd.htm?srsltid=AfmBOooZHBn9EqdAQjlsLSM9w5I0h4208G5lrELw6LGDPsXMtBqRl8xi
