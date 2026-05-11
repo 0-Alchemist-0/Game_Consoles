@@ -1,6 +1,10 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// 2026-05-11 19:41 +02:00 - Changed the home screen Exit button to reboot the
+// ESP32 instead of blanking the display.
+// 2026-05-11 19:33 +02:00 - Scaled the home screen RAW buttons to fit the
+// button slots defined in background.raw.
 // 2026-05-11 18:52 +02:00 - Added an SD-loaded home screen after the intro with
 // background and Games, Settings, and Exit RAW buttons.
 // 2026-05-11 18:40 +02:00 - Added a 4 second hold on frame_000.raw before the
@@ -170,19 +174,23 @@ const int btnResultMenuH = 45;
 const int homeButtonRawW = 320;
 const int homeButtonRawH = 90;
 
-const int homeGamesRawX = 0;
-const int homeGamesRawY = 260;
-const int homeSettingsRawX = 0;
-const int homeSettingsRawY = 325;
-const int homeExitRawX = 0;
-const int homeExitRawY = 390;
+const int homeButtonSlotX = 54;
+const int homeButtonSlotW = 213;
+const int homeButtonSlotH = 47;
+
+const int homeGamesRawX = homeButtonSlotX;
+const int homeGamesRawY = 291;
+const int homeSettingsRawX = homeButtonSlotX;
+const int homeSettingsRawY = 340;
+const int homeExitRawX = homeButtonSlotX;
+const int homeExitRawY = 388;
 
 const int homeTouchX = 35;
 const int homeTouchW = 250;
-const int homeTouchH = 62;
-const int homeGamesTouchY = 275;
-const int homeSettingsTouchY = 340;
-const int homeExitTouchY = 405;
+const int homeTouchH = 55;
+const int homeGamesTouchY = 287;
+const int homeSettingsTouchY = 336;
+const int homeExitTouchY = 384;
 
 // ============================================================================
 // RAW565 VIDEO PLAYER - /intro/frame_000.raw ... /intro/frame_074.raw
@@ -198,6 +206,8 @@ static const int INTRO_ROTATION = 0;
 static const unsigned long INTRO_FIRST_FRAME_HOLD_MS = 4000;
 
 static uint16_t rawDrawBuffer[VIDEO_W * RAW_BLOCK_LINES];
+static uint16_t rawScaleSourceBuffer[homeButtonRawW * homeButtonRawH];
+static uint16_t rawScaleLineBuffer[screenW];
 
 bool drawRaw565ImageFromSD(const char *filename, int16_t x, int16_t y, int imageW, int imageH) {
   File rawFile = SD.open(filename, FILE_READ);
@@ -254,6 +264,55 @@ bool drawRaw565ImageFromSD(const char *filename, int16_t x, int16_t y, int image
 
 bool drawRaw565FromSD(const char *filename, int16_t x, int16_t y) {
   return drawRaw565ImageFromSD(filename, x, y, VIDEO_W, VIDEO_H);
+}
+
+bool drawScaledRaw565ImageFromSD(const char *filename, int16_t x, int16_t y,
+                                 int sourceW, int sourceH,
+                                 int destW, int destH) {
+  if (destW > screenW) return false;
+  if (sourceW != homeButtonRawW || sourceH != homeButtonRawH) return false;
+
+  File rawFile = SD.open(filename, FILE_READ);
+
+  if (!rawFile) {
+    Serial.print("Cannot open RAW: ");
+    Serial.println(filename);
+    return false;
+  }
+
+  uint32_t expectedSize = (uint32_t)sourceW * sourceH * 2;
+
+  if (rawFile.size() != expectedSize) {
+    Serial.print("Invalid RAW size: ");
+    Serial.print(filename);
+    Serial.print(" size=");
+    Serial.println(rawFile.size());
+    rawFile.close();
+    return false;
+  }
+
+  int bytesRead = rawFile.read((uint8_t *)rawScaleSourceBuffer, expectedSize);
+  rawFile.close();
+
+  if (bytesRead != (int)expectedSize) {
+    Serial.print("RAW read failed: ");
+    Serial.println(filename);
+    return false;
+  }
+
+  for (int dy = 0; dy < destH; dy++) {
+    int sy = ((long)dy * sourceH) / destH;
+
+    for (int dx = 0; dx < destW; dx++) {
+      int sx = ((long)dx * sourceW) / destW;
+      rawScaleLineBuffer[dx] = rawScaleSourceBuffer[sy * sourceW + sx];
+    }
+
+    digitalWrite(PIN_SD_CS, HIGH);
+    gfx->draw16bitRGBBitmap(x, y + dy, rawScaleLineBuffer, destW, 1);
+  }
+
+  return true;
 }
 
 void playVideoRaw(const char *folder, int totalFrames, int targetFps) {
@@ -656,27 +715,33 @@ void drawHomeScreen() {
   bool exitDrawn = false;
 
   if (sdReady) {
-    gamesDrawn = drawRaw565ImageFromSD("/home_screen/button_games.raw",
-                                       homeGamesRawX, homeGamesRawY,
-                                       homeButtonRawW, homeButtonRawH);
-    settingsDrawn = drawRaw565ImageFromSD("/home_screen/button_settings.raw",
-                                          homeSettingsRawX, homeSettingsRawY,
-                                          homeButtonRawW, homeButtonRawH);
-    exitDrawn = drawRaw565ImageFromSD("/home_screen/button_exit.raw",
-                                      homeExitRawX, homeExitRawY,
-                                      homeButtonRawW, homeButtonRawH);
+    gamesDrawn = drawScaledRaw565ImageFromSD("/home_screen/button_games.raw",
+                                             homeGamesRawX, homeGamesRawY,
+                                             homeButtonRawW, homeButtonRawH,
+                                             homeButtonSlotW, homeButtonSlotH);
+    settingsDrawn = drawScaledRaw565ImageFromSD("/home_screen/button_settings.raw",
+                                                homeSettingsRawX, homeSettingsRawY,
+                                                homeButtonRawW, homeButtonRawH,
+                                                homeButtonSlotW, homeButtonSlotH);
+    exitDrawn = drawScaledRaw565ImageFromSD("/home_screen/button_exit.raw",
+                                            homeExitRawX, homeExitRawY,
+                                            homeButtonRawW, homeButtonRawH,
+                                            homeButtonSlotW, homeButtonSlotH);
   }
 
   if (!gamesDrawn) {
-    drawButton(55, homeGamesTouchY, 210, 55, RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "GAMES", 2);
+    drawButton(homeGamesRawX, homeGamesRawY, homeButtonSlotW, homeButtonSlotH,
+               RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "GAMES", 2);
   }
 
   if (!settingsDrawn) {
-    drawButton(55, homeSettingsTouchY, 210, 55, RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "SETTINGS", 2);
+    drawButton(homeSettingsRawX, homeSettingsRawY, homeButtonSlotW, homeButtonSlotH,
+               RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "SETTINGS", 2);
   }
 
   if (!exitDrawn) {
-    drawButton(55, homeExitTouchY, 210, 55, RGB565_RED, RGB565_WHITE, RGB565_WHITE, "EXIT", 2);
+    drawButton(homeExitRawX, homeExitRawY, homeButtonSlotW, homeButtonSlotH,
+               RGB565_RED, RGB565_WHITE, RGB565_WHITE, "EXIT", 2);
   }
 }
 
@@ -976,7 +1041,8 @@ void handleHomeTouch(int x, int y) {
     beepClick();
     stopNetwork();
     gfx->fillScreen(RGB565_BLACK);
-    appState = STATE_EXIT;
+    delay(250);
+    ESP.restart();
     return;
   }
 }
