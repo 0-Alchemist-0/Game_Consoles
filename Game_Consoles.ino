@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// 2026-05-11 15:50 +02:00 - Replaced the BMP boot intro player with a RAW565
+// video player using /intro/frame_001.raw through /intro/frame_075.raw.
 // 2026-05-11 15:35 +02:00 - Enabled inverted display colors through a dedicated
 // display setting.
 // 2026-05-11 15:27 +02:00 - Added microSD support and a 24-bit BMP boot intro
@@ -32,7 +34,7 @@ static const int PIN_LCD_MISO = 47;
 static const int PIN_LCD_SCLK = 48;
 
 static const int PIN_SD_CS    = 8;
-static const int SD_SPI_FREQ  = 1000000;
+static const int SD_SPI_FREQ  = 49000000;
 
 static const int PIN_TP_INT   = 6;
 static const int PIN_TP_RST   = 7;
@@ -155,134 +157,75 @@ const int btnResultMenuW = 220;
 const int btnResultMenuH = 45;
 
 // ============================================================================
-// BMP VIDEO PLAYER
+// RAW565 VIDEO PLAYER - /intro/frame_001.raw ... /intro/frame_075.raw
 // ============================================================================
-uint16_t read16(File &f) {
-  uint16_t result;
-  ((uint8_t *)&result)[0] = f.read();
-  ((uint8_t *)&result)[1] = f.read();
-  return result;
-}
+static const int VIDEO_W = 480;
+static const int VIDEO_H = 320;
+static const int RAW_BLOCK_LINES = 32;
+static const int RAW_FRAME_SIZE = VIDEO_W * VIDEO_H * 2;
 
-uint32_t read32(File &f) {
-  uint32_t result;
-  ((uint8_t *)&result)[0] = f.read();
-  ((uint8_t *)&result)[1] = f.read();
-  ((uint8_t *)&result)[2] = f.read();
-  ((uint8_t *)&result)[3] = f.read();
-  return result;
-}
+static uint16_t rawDrawBuffer[VIDEO_W * RAW_BLOCK_LINES];
 
-uint16_t rgb888to565(uint8_t r, uint8_t g, uint8_t b) {
-  return ((r & 0xF8) << 8) |
-         ((g & 0xFC) << 3) |
-         (b >> 3);
-}
+bool drawRaw565FromSD(const char *filename, int16_t x, int16_t y) {
+  File rawFile = SD.open(filename, FILE_READ);
 
-bool drawBmpFromSD(const char *filename, int16_t x, int16_t y) {
-  File bmpFile = SD.open(filename);
-
-  if (!bmpFile) {
-    Serial.print("Cannot open BMP: ");
+  if (!rawFile) {
+    Serial.print("Cannot open RAW: ");
     Serial.println(filename);
     return false;
   }
 
-  if (read16(bmpFile) != 0x4D42) {
-    Serial.println("Invalid BMP file.");
-    bmpFile.close();
+  if (rawFile.size() != RAW_FRAME_SIZE) {
+    Serial.print("Invalid RAW size: ");
+    Serial.print(filename);
+    Serial.print(" size=");
+    Serial.println(rawFile.size());
+    rawFile.close();
     return false;
   }
 
-  read32(bmpFile);
-  read32(bmpFile);
-  uint32_t bmpImageOffset = read32(bmpFile);
+  for (int blockY = 0; blockY < VIDEO_H; blockY += RAW_BLOCK_LINES) {
+    int linesThisBlock = RAW_BLOCK_LINES;
 
-  read32(bmpFile);
-  int32_t bmpWidth = read32(bmpFile);
-  int32_t bmpHeight = read32(bmpFile);
-
-  if (read16(bmpFile) != 1) {
-    bmpFile.close();
-    return false;
-  }
-
-  uint16_t bitDepth = read16(bmpFile);
-
-  if (bitDepth != 24) {
-    Serial.println("BMP must be 24-bit.");
-    bmpFile.close();
-    return false;
-  }
-
-  uint32_t compression = read32(bmpFile);
-
-  if (compression != 0) {
-    Serial.println("BMP must be uncompressed.");
-    bmpFile.close();
-    return false;
-  }
-
-  bool flip = true;
-
-  if (bmpHeight < 0) {
-    bmpHeight = -bmpHeight;
-    flip = false;
-  }
-
-  uint32_t rowSize = (bmpWidth * 3 + 3) & ~3;
-
-  static uint8_t sdbuffer[480 * 3];
-  static uint16_t linebuffer[480];
-
-  if (bmpWidth > 480) {
-    Serial.println("BMP is too wide for the buffer.");
-    bmpFile.close();
-    return false;
-  }
-
-  for (int row = 0; row < bmpHeight; row++) {
-    uint32_t pos;
-
-    if (flip) {
-      pos = bmpImageOffset + (bmpHeight - 1 - row) * rowSize;
-    } else {
-      pos = bmpImageOffset + row * rowSize;
+    if (blockY + linesThisBlock > VIDEO_H) {
+      linesThisBlock = VIDEO_H - blockY;
     }
 
-    bmpFile.seek(pos);
-    bmpFile.read(sdbuffer, bmpWidth * 3);
+    int bytesToRead = VIDEO_W * linesThisBlock * 2;
 
-    for (int col = 0; col < bmpWidth; col++) {
-      uint8_t b = sdbuffer[col * 3 + 0];
-      uint8_t g = sdbuffer[col * 3 + 1];
-      uint8_t r = sdbuffer[col * 3 + 2];
+    digitalWrite(PIN_LCD_CS, HIGH);
 
-      linebuffer[col] = rgb888to565(r, g, b);
+    int bytesRead = rawFile.read((uint8_t *)rawDrawBuffer, bytesToRead);
+
+    if (bytesRead != bytesToRead) {
+      rawFile.close();
+      return false;
     }
 
-    gfx->draw16bitRGBBitmap(x, y + row, linebuffer, bmpWidth, 1);
+    digitalWrite(PIN_SD_CS, HIGH);
+    gfx->draw16bitRGBBitmap(x, y + blockY, rawDrawBuffer, VIDEO_W, linesThisBlock);
   }
 
-  bmpFile.close();
+  rawFile.close();
   return true;
 }
 
-void playVideo(const char *folder, int totalFrames, int frameDelayMs) {
+void playVideoRaw(const char *folder, int totalFrames, int targetFps) {
   if (!sdReady) return;
 
   char path[64];
+  unsigned long frameTime = 1000UL / targetFps;
 
   for (int i = 1; i <= totalFrames; i++) {
-    snprintf(path, sizeof(path), "%s/frame_%03d.bmp", folder, i);
-
     unsigned long frameStart = millis();
-    drawBmpFromSD(path, 0, 0);
+
+    snprintf(path, sizeof(path), "%s/frame_%03d.raw", folder, i);
+    drawRaw565FromSD(path, 0, 0);
 
     unsigned long used = millis() - frameStart;
 
-    if (used < (unsigned long)frameDelayMs) {
-      delay(frameDelayMs - used);
+    if (used < frameTime) {
+      delay(frameTime - used);
     }
   }
 }
@@ -291,7 +234,8 @@ void playBootIntro() {
   gfx->setRotation(1);
   gfx->fillScreen(RGB565_BLACK);
 
-  playVideo("/intro", 75, 66);
+  delay(50);
+  playVideoRaw("/intro", 75, 65);
 
   gfx->setRotation(0);
   gfx->fillScreen(RGB565_BLACK);
@@ -965,6 +909,12 @@ void setup() {
 
   pinMode(PIN_BUZZER, OUTPUT);
 
+  pinMode(PIN_LCD_CS, OUTPUT);
+  digitalWrite(PIN_LCD_CS, HIGH);
+
+  pinMode(PIN_SD_CS, OUTPUT);
+  digitalWrite(PIN_SD_CS, HIGH);
+
   pinMode(PIN_LCD_RST, OUTPUT);
   digitalWrite(PIN_LCD_RST, HIGH);
   delay(100);
@@ -992,10 +942,7 @@ void setup() {
   gfx->setRotation(0);
   gfx->fillScreen(RGB565_BLACK);
 
-  pinMode(PIN_LCD_CS, OUTPUT);
   digitalWrite(PIN_LCD_CS, HIGH);
-
-  pinMode(PIN_SD_CS, OUTPUT);
   digitalWrite(PIN_SD_CS, HIGH);
 
   SPI.begin(PIN_LCD_SCLK, PIN_LCD_MISO, PIN_LCD_MOSI, -1);
@@ -1006,7 +953,12 @@ void setup() {
   } else {
     Serial.println("microSD OK");
     sdReady = true;
-    playBootIntro();
+
+    if (SD.exists("/intro/frame_001.raw")) {
+      playBootIntro();
+    } else {
+      Serial.println("Missing /intro/frame_001.raw");
+    }
   }
 
   loadScore();
