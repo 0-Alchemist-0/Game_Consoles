@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// 2026-05-11 18:52 +02:00 - Added an SD-loaded home screen after the intro with
+// background and Games, Settings, and Exit RAW buttons.
 // 2026-05-11 18:40 +02:00 - Added a 4 second hold on frame_000.raw before the
 // rest of the RAW intro animation plays.
 // 2026-05-11 18:05 +02:00 - Set RAW intro playback back to normal portrait
@@ -86,14 +88,17 @@ bool sdReady = false;
 // APP STATE
 // ============================================================================
 enum AppState {
+  STATE_HOME,
   STATE_MENU,
+  STATE_SETTINGS,
+  STATE_EXIT,
   STATE_WAITING_HOST,
   STATE_CONNECTING_JOIN,
   STATE_PLAYING,
   STATE_RESULT
 };
 
-AppState appState = STATE_MENU;
+AppState appState = STATE_HOME;
 
 char board[3][3];
 char currentPlayer = 'X';
@@ -162,6 +167,23 @@ const int btnResultMenuY = 390;
 const int btnResultMenuW = 220;
 const int btnResultMenuH = 45;
 
+const int homeButtonRawW = 320;
+const int homeButtonRawH = 90;
+
+const int homeGamesRawX = 0;
+const int homeGamesRawY = 260;
+const int homeSettingsRawX = 0;
+const int homeSettingsRawY = 325;
+const int homeExitRawX = 0;
+const int homeExitRawY = 390;
+
+const int homeTouchX = 35;
+const int homeTouchW = 250;
+const int homeTouchH = 62;
+const int homeGamesTouchY = 275;
+const int homeSettingsTouchY = 340;
+const int homeExitTouchY = 405;
+
 // ============================================================================
 // RAW565 VIDEO PLAYER - /intro/frame_000.raw ... /intro/frame_074.raw
 // ============================================================================
@@ -177,7 +199,7 @@ static const unsigned long INTRO_FIRST_FRAME_HOLD_MS = 4000;
 
 static uint16_t rawDrawBuffer[VIDEO_W * RAW_BLOCK_LINES];
 
-bool drawRaw565FromSD(const char *filename, int16_t x, int16_t y) {
+bool drawRaw565ImageFromSD(const char *filename, int16_t x, int16_t y, int imageW, int imageH) {
   File rawFile = SD.open(filename, FILE_READ);
 
   if (!rawFile) {
@@ -186,7 +208,9 @@ bool drawRaw565FromSD(const char *filename, int16_t x, int16_t y) {
     return false;
   }
 
-  if (rawFile.size() != RAW_FRAME_SIZE) {
+  uint32_t expectedSize = (uint32_t)imageW * imageH * 2;
+
+  if (rawFile.size() != expectedSize) {
     Serial.print("Invalid RAW size: ");
     Serial.print(filename);
     Serial.print(" size=");
@@ -195,14 +219,21 @@ bool drawRaw565FromSD(const char *filename, int16_t x, int16_t y) {
     return false;
   }
 
-  for (int blockY = 0; blockY < VIDEO_H; blockY += RAW_BLOCK_LINES) {
+  if (imageW > VIDEO_W) {
+    Serial.print("RAW image is too wide: ");
+    Serial.println(filename);
+    rawFile.close();
+    return false;
+  }
+
+  for (int blockY = 0; blockY < imageH; blockY += RAW_BLOCK_LINES) {
     int linesThisBlock = RAW_BLOCK_LINES;
 
-    if (blockY + linesThisBlock > VIDEO_H) {
-      linesThisBlock = VIDEO_H - blockY;
+    if (blockY + linesThisBlock > imageH) {
+      linesThisBlock = imageH - blockY;
     }
 
-    int bytesToRead = VIDEO_W * linesThisBlock * 2;
+    int bytesToRead = imageW * linesThisBlock * 2;
 
     digitalWrite(PIN_LCD_CS, HIGH);
 
@@ -214,11 +245,15 @@ bool drawRaw565FromSD(const char *filename, int16_t x, int16_t y) {
     }
 
     digitalWrite(PIN_SD_CS, HIGH);
-    gfx->draw16bitRGBBitmap(x, y + blockY, rawDrawBuffer, VIDEO_W, linesThisBlock);
+    gfx->draw16bitRGBBitmap(x, y + blockY, rawDrawBuffer, imageW, linesThisBlock);
   }
 
   rawFile.close();
   return true;
+}
+
+bool drawRaw565FromSD(const char *filename, int16_t x, int16_t y) {
+  return drawRaw565ImageFromSD(filename, x, y, VIDEO_W, VIDEO_H);
 }
 
 void playVideoRaw(const char *folder, int totalFrames, int targetFps) {
@@ -600,6 +635,62 @@ void drawResultScreen() {
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "INAPOI LA MENIU", 2);
 }
 
+void drawHomeScreen() {
+  appState = STATE_HOME;
+  gfx->setRotation(0);
+
+  bool backgroundDrawn = false;
+
+  if (sdReady) {
+    backgroundDrawn = drawRaw565ImageFromSD("/home_screen/background.raw", 0, 0, screenW, screenH);
+  }
+
+  if (!backgroundDrawn) {
+    gfx->fillScreen(RGB565_BLACK);
+    drawCenteredText("HOME", 80, 3, RGB565_WHITE);
+    drawCenteredText("Missing /home_screen files", 125, 1, RGB565_YELLOW);
+  }
+
+  bool gamesDrawn = false;
+  bool settingsDrawn = false;
+  bool exitDrawn = false;
+
+  if (sdReady) {
+    gamesDrawn = drawRaw565ImageFromSD("/home_screen/button_games.raw",
+                                       homeGamesRawX, homeGamesRawY,
+                                       homeButtonRawW, homeButtonRawH);
+    settingsDrawn = drawRaw565ImageFromSD("/home_screen/button_settings.raw",
+                                          homeSettingsRawX, homeSettingsRawY,
+                                          homeButtonRawW, homeButtonRawH);
+    exitDrawn = drawRaw565ImageFromSD("/home_screen/button_exit.raw",
+                                      homeExitRawX, homeExitRawY,
+                                      homeButtonRawW, homeButtonRawH);
+  }
+
+  if (!gamesDrawn) {
+    drawButton(55, homeGamesTouchY, 210, 55, RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "GAMES", 2);
+  }
+
+  if (!settingsDrawn) {
+    drawButton(55, homeSettingsTouchY, 210, 55, RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "SETTINGS", 2);
+  }
+
+  if (!exitDrawn) {
+    drawButton(55, homeExitTouchY, 210, 55, RGB565_RED, RGB565_WHITE, RGB565_WHITE, "EXIT", 2);
+  }
+}
+
+void drawSettingsScreen() {
+  appState = STATE_SETTINGS;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("SETTINGS", 70, 3, RGB565_CYAN);
+  drawCenteredText("No settings available", 145, 2, RGB565_YELLOW);
+
+  drawButton(btnMenuX, btnMenuY, btnMenuW, btnMenuH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "HOME", 2);
+}
+
 // ============================================================================
 // NETWORK
 // ============================================================================
@@ -867,6 +958,36 @@ void handleMenuTouch(int x, int y) {
   }
 }
 
+void handleHomeTouch(int x, int y) {
+  if (inRect(x, y, homeTouchX, homeGamesTouchY, homeTouchW, homeTouchH)) {
+    beepClick();
+    appState = STATE_MENU;
+    drawMenuScreen();
+    return;
+  }
+
+  if (inRect(x, y, homeTouchX, homeSettingsTouchY, homeTouchW, homeTouchH)) {
+    beepClick();
+    drawSettingsScreen();
+    return;
+  }
+
+  if (inRect(x, y, homeTouchX, homeExitTouchY, homeTouchW, homeTouchH)) {
+    beepClick();
+    stopNetwork();
+    gfx->fillScreen(RGB565_BLACK);
+    appState = STATE_EXIT;
+    return;
+  }
+}
+
+void handleSettingsTouch(int x, int y) {
+  if (inRect(x, y, btnMenuX, btnMenuY, btnMenuW, btnMenuH)) {
+    beepClick();
+    drawHomeScreen();
+  }
+}
+
 void handleWaitingTouch(int x, int y) {
   if (inRect(x, y, btnMenuX, btnMenuY, btnMenuW, btnMenuH)) {
     beepClick();
@@ -905,8 +1026,12 @@ void handleResultTouch(int x, int y) {
 }
 
 void handleTouch(int x, int y) {
-  if (appState == STATE_MENU) {
+  if (appState == STATE_HOME) {
+    handleHomeTouch(x, y);
+  } else if (appState == STATE_MENU) {
     handleMenuTouch(x, y);
+  } else if (appState == STATE_SETTINGS) {
+    handleSettingsTouch(x, y);
   } else if (appState == STATE_WAITING_HOST || appState == STATE_CONNECTING_JOIN) {
     handleWaitingTouch(x, y);
   } else if (appState == STATE_PLAYING) {
@@ -978,7 +1103,7 @@ void setup() {
   clearBoard();
   WiFi.mode(WIFI_OFF);
 
-  drawMenuScreen();
+  drawHomeScreen();
 }
 
 void loop() {
