@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// 2026-05-14 23:00 +02:00 - Added a two-step Host setup flow with selectable
+// SSID names from the epic list and host IP confirmation before starting AP mode.
 // 2026-05-14 22:47 +02:00 - Split Join into two pages: WiFi network selection
 // first, then host IP confirmation with numeric keypad before connecting.
 // 2026-05-14 22:38 +02:00 - Added a Join setup page with WiFi network scanning,
@@ -75,6 +77,41 @@ const char *AP_SSID = "TicTacToe_ESP32";
 const char *AP_PASS = "Alchemist2026";
 const char *JOIN_WIFI_PASS = "Alchemist2026";
 
+const char *epicSSIDList[] = {
+  "Searching for Network...",
+  "404 Wi-Fi Not Found",
+  "Martin Router King",
+  "Wu-Tang LAN",
+  "Tell My Wi-Fi Love Her",
+  "Virus.exe",
+  "The Promised LAN",
+  "Drop It Like It's Hotspot",
+  "Wi-Fi: Art or Sacrifice?",
+  "Pretty Fly for a Wi-Fi",
+  "Surveillance Camera #04",
+  "FBI Surveillance Van",
+  "Loading...",
+  "Connecting...",
+  "Winternet is Coming",
+  "It Hurts When IP",
+  "Obi-Wan Kenobi",
+  "Silence of the LANs",
+  "Buy Your Own Internet",
+  "Password is 1234... or not",
+  "Bill Wi the Science Fi",
+  "The LAN Before Time",
+  "Lord of the Pings",
+  "Skynet Global Defense",
+  "Paid Network (5$/min)",
+  "I Can Haz Wireless?",
+  "No Free Wi-Fi Here",
+  "Get your own Wi-Fi!",
+  "Searching for Signal...",
+  "The Golden Wi-Fi"
+};
+
+const int EPIC_SSID_COUNT = sizeof(epicSSIDList) / sizeof(epicSSIDList[0]);
+
 const uint16_t NET_PORT = 3333;
 IPAddress HOST_IP(192, 168, 10, 1);
 
@@ -107,6 +144,8 @@ enum AppState {
   STATE_MENU,
   STATE_SETTINGS,
   STATE_EXIT,
+  STATE_HOST_SETUP,
+  STATE_HOST_IP,
   STATE_JOIN_SETUP,
   STATE_JOIN_IP,
   STATE_WAITING_HOST,
@@ -127,6 +166,10 @@ bool isHost = false;
 bool networkConnected = false;
 char myPlayer = ' ';
 bool myTurn = false;
+
+static const int MAX_HOST_SSID_VISIBLE = 4;
+int selectedHostSSIDIndex = 0;
+int hostSSIDListOffset = 0;
 
 static const int MAX_JOIN_NETWORKS = 4;
 String joinNetworks[MAX_JOIN_NETWORKS];
@@ -280,6 +323,37 @@ const int btnJoinIpConnectX = 170;
 const int btnJoinIpConnectY = 420;
 const int btnJoinIpConnectW = 130;
 const int btnJoinIpConnectH = 40;
+
+const int hostSSIDX = 20;
+const int hostSSIDY = 145;
+const int hostSSIDW = 280;
+const int hostSSIDH = 28;
+const int hostSSIDGap = 6;
+
+const int btnHostBackX = 12;
+const int btnHostBackY = 430;
+const int btnHostBackW = 90;
+const int btnHostBackH = 38;
+
+const int btnHostMoreX = 115;
+const int btnHostMoreY = 430;
+const int btnHostMoreW = 90;
+const int btnHostMoreH = 38;
+
+const int btnHostNextX = 218;
+const int btnHostNextY = 430;
+const int btnHostNextW = 90;
+const int btnHostNextH = 38;
+
+const int btnHostIpBackX = 20;
+const int btnHostIpBackY = 420;
+const int btnHostIpBackW = 130;
+const int btnHostIpBackH = 40;
+
+const int btnHostIpStartX = 170;
+const int btnHostIpStartY = 420;
+const int btnHostIpStartW = 130;
+const int btnHostIpStartH = 40;
 
 // ============================================================================
 // RAW565 VIDEO PLAYER - /intro/frame_000.raw ... /intro/frame_074.raw
@@ -717,6 +791,27 @@ void drawJoinNetworkList() {
   }
 }
 
+void drawHostSSIDList() {
+  for (int i = 0; i < MAX_HOST_SSID_VISIBLE; i++) {
+    int ssidIndex = hostSSIDListOffset + i;
+    int y = hostSSIDY + i * (hostSSIDH + hostSSIDGap);
+    uint16_t fillColor = (ssidIndex == selectedHostSSIDIndex) ? RGB565_GREEN : RGB565_BLUE;
+    uint16_t textColor = (ssidIndex == selectedHostSSIDIndex) ? RGB565_BLACK : RGB565_WHITE;
+    char label[36];
+
+    if (ssidIndex < EPIC_SSID_COUNT) {
+      snprintf(label, sizeof(label), "%d %s", ssidIndex + 1, epicSSIDList[ssidIndex]);
+    } else {
+      snprintf(label, sizeof(label), "-");
+      fillColor = RGB565_BLACK;
+      textColor = RGB565_WHITE;
+    }
+
+    drawButton(hostSSIDX, y, hostSSIDW, hostSSIDH,
+               fillColor, RGB565_WHITE, textColor, label, 1);
+  }
+}
+
 // ============================================================================
 // GAME LOGIC
 // ============================================================================
@@ -895,7 +990,7 @@ void drawWaitingHostScreen() {
   drawCenteredText("setup cu JOIN", 210, 2, RGB565_YELLOW);
 
   drawCenteredText("SSID:", 280, 2, RGB565_WHITE);
-  drawCenteredText(AP_SSID, 310, 2, RGB565_CYAN);
+  drawCenteredText(epicSSIDList[selectedHostSSIDIndex], 310, 1, RGB565_CYAN);
 
   drawButton(btnMenuX, btnMenuY, btnMenuW, btnMenuH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENIU", 2);
@@ -1061,6 +1156,38 @@ void drawJoinIpScreen() {
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "JOIN", 2);
 }
 
+void drawHostSetupScreen() {
+  appState = STATE_HOST_SETUP;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("HOST", 18, 3, RGB565_GREEN);
+  drawCenteredText("Select SSID", 64, 2, RGB565_YELLOW);
+  drawHostSSIDList();
+
+  drawButton(btnHostBackX, btnHostBackY, btnHostBackW, btnHostBackH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+  drawButton(btnHostMoreX, btnHostMoreY, btnHostMoreW, btnHostMoreH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MORE", 2);
+  drawButton(btnHostNextX, btnHostNextY, btnHostNextW, btnHostNextH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "NEXT", 2);
+}
+
+void drawHostIpScreen() {
+  appState = STATE_HOST_IP;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("HOST", 24, 3, RGB565_GREEN);
+  drawCenteredText("HOST IP", 62, 2, RGB565_YELLOW);
+
+  drawIpFields();
+  drawSettingsKeypad();
+
+  drawButton(btnHostIpBackX, btnHostIpBackY, btnHostIpBackW, btnHostIpBackH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+  drawButton(btnHostIpStartX, btnHostIpStartY, btnHostIpStartW, btnHostIpStartH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "HOST", 2);
+}
+
 // ============================================================================
 // NETWORK
 // ============================================================================
@@ -1149,6 +1276,25 @@ void beginSelectedJoinConnection() {
   WiFi.begin(joinNetworks[selectedJoinNetwork].c_str(), JOIN_WIFI_PASS);
 }
 
+void beginHostNetwork() {
+  saveNetworkSettings();
+  stopNetwork();
+
+  localGame = false;
+  isHost = true;
+  myPlayer = 'X';
+  myTurn = true;
+
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(HOST_IP, HOST_IP, IPAddress(255, 255, 255, 0));
+  WiFi.softAP(epicSSIDList[selectedHostSSIDIndex], AP_PASS);
+
+  gameServer.begin();
+
+  appState = STATE_WAITING_HOST;
+  drawWaitingHostScreen();
+}
+
 void startLocalGame() {
   stopNetwork();
 
@@ -1164,18 +1310,15 @@ void startHostMode() {
   stopNetwork();
 
   localGame = false;
-  isHost = true;
+  isHost = false;
   myPlayer = 'X';
   myTurn = true;
 
-  WiFi.mode(WIFI_AP);
-  WiFi.softAPConfig(HOST_IP, HOST_IP, IPAddress(255, 255, 255, 0));
-  WiFi.softAP(AP_SSID, AP_PASS);
+  activeIpField = 0;
+  activeIpFieldNeedsClear = true;
+  updateIpTextFromParts();
 
-  gameServer.begin();
-
-  appState = STATE_WAITING_HOST;
-  drawWaitingHostScreen();
+  drawHostSetupScreen();
 }
 
 void startJoinMode() {
@@ -1610,6 +1753,89 @@ void handleJoinIpTouch(int x, int y) {
   }
 }
 
+void handleHostSetupTouch(int x, int y) {
+  for (int i = 0; i < MAX_HOST_SSID_VISIBLE; i++) {
+    int ssidIndex = hostSSIDListOffset + i;
+    int ssidY = hostSSIDY + i * (hostSSIDH + hostSSIDGap);
+
+    if (ssidIndex >= EPIC_SSID_COUNT) continue;
+
+    if (inRect(x, y, hostSSIDX, ssidY, hostSSIDW, hostSSIDH)) {
+      beepClick();
+      selectedHostSSIDIndex = ssidIndex;
+      drawHostSSIDList();
+      return;
+    }
+  }
+
+  if (inRect(x, y, btnHostBackX, btnHostBackY, btnHostBackW, btnHostBackH)) {
+    beepClick();
+    returnToMenu(false);
+    return;
+  }
+
+  if (inRect(x, y, btnHostMoreX, btnHostMoreY, btnHostMoreW, btnHostMoreH)) {
+    beepClick();
+    hostSSIDListOffset += MAX_HOST_SSID_VISIBLE;
+
+    if (hostSSIDListOffset >= EPIC_SSID_COUNT) {
+      hostSSIDListOffset = 0;
+    }
+
+    drawHostSetupScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnHostNextX, btnHostNextY, btnHostNextW, btnHostNextH)) {
+    beepClick();
+    activeIpField = 0;
+    activeIpFieldNeedsClear = true;
+    updateIpTextFromParts();
+    drawHostIpScreen();
+    return;
+  }
+}
+
+void handleHostIpTouch(int x, int y) {
+  for (int i = 0; i < 4; i++) {
+    int fieldX = settingsFieldX + i * (settingsFieldW + settingsFieldGap);
+
+    if (inRect(x, y, fieldX, settingsFieldY, settingsFieldW, settingsFieldH)) {
+      beepClick();
+      activeIpField = i;
+      activeIpFieldNeedsClear = true;
+      drawIpFields();
+      return;
+    }
+  }
+
+  for (int i = 0; i < 12; i++) {
+    int col = i % 3;
+    int row = i / 3;
+    int keyX = keyPadX + col * (keyPadW + keyPadGapX);
+    int keyY = keyPadY + row * (keyPadH + keyPadGapY);
+
+    if (!inRect(x, y, keyX, keyY, keyPadW, keyPadH)) continue;
+
+    beepClick();
+    handleIpKeypadAction(i);
+    drawIpFields();
+    return;
+  }
+
+  if (inRect(x, y, btnHostIpBackX, btnHostIpBackY, btnHostIpBackW, btnHostIpBackH)) {
+    beepClick();
+    drawHostSetupScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnHostIpStartX, btnHostIpStartY, btnHostIpStartW, btnHostIpStartH)) {
+    beepStart();
+    beginHostNetwork();
+    return;
+  }
+}
+
 void handleWaitingTouch(int x, int y) {
   if (inRect(x, y, btnMenuX, btnMenuY, btnMenuW, btnMenuH)) {
     beepClick();
@@ -1654,6 +1880,10 @@ void handleTouch(int x, int y) {
     handleMenuTouch(x, y);
   } else if (appState == STATE_SETTINGS) {
     handleSettingsTouch(x, y);
+  } else if (appState == STATE_HOST_SETUP) {
+    handleHostSetupTouch(x, y);
+  } else if (appState == STATE_HOST_IP) {
+    handleHostIpTouch(x, y);
   } else if (appState == STATE_JOIN_SETUP) {
     handleJoinSetupTouch(x, y);
   } else if (appState == STATE_JOIN_IP) {
