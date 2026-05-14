@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// 2026-05-14 23:38 +02:00 - Expanded Join WiFi selection to show eight SSIDs
+// per page and added MORE pagination for additional scanned networks.
 // 2026-05-14 23:31 +02:00 - Added "Connect and Die" and "The LAN of the Free"
 // to the selectable Host SSID list.
 // 2026-05-14 23:27 +02:00 - Expanded the Host Select SSID page to show eight
@@ -175,10 +177,12 @@ static const int MAX_HOST_SSID_VISIBLE = 8;
 int selectedHostSSIDIndex = 0;
 int hostSSIDListOffset = 0;
 
-static const int MAX_JOIN_NETWORKS = 4;
+static const int MAX_JOIN_NETWORKS = 24;
+static const int MAX_JOIN_NETWORKS_VISIBLE = 8;
 String joinNetworks[MAX_JOIN_NETWORKS];
 int joinNetworkCount = 0;
 int selectedJoinNetwork = -1;
+int joinNetworkListOffset = 0;
 
 uint8_t ipParts[4] = {192, 168, 10, 1};
 char ipFieldText[4][4] = {"192", "168", "10", "1"};
@@ -291,10 +295,10 @@ const int btnSettingsSaveW = 130;
 const int btnSettingsSaveH = 40;
 
 const int joinNetworkX = 20;
-const int joinNetworkY = 145;
+const int joinNetworkY = 112;
 const int joinNetworkW = 280;
-const int joinNetworkH = 28;
-const int joinNetworkGap = 6;
+const int joinNetworkH = 32;
+const int joinNetworkGap = 5;
 
 const int joinKeyPadX = 35;
 const int joinKeyPadY = 282;
@@ -303,19 +307,24 @@ const int joinKeyPadH = 30;
 const int joinKeyPadGapX = 15;
 const int joinKeyPadGapY = 6;
 
-const int btnJoinBackX = 12;
+const int btnJoinBackX = 4;
 const int btnJoinBackY = 430;
-const int btnJoinBackW = 90;
+const int btnJoinBackW = 74;
 const int btnJoinBackH = 38;
 
-const int btnJoinScanX = 115;
+const int btnJoinScanX = 83;
 const int btnJoinScanY = 430;
-const int btnJoinScanW = 90;
+const int btnJoinScanW = 74;
 const int btnJoinScanH = 38;
 
-const int btnJoinConnectX = 218;
+const int btnJoinMoreX = 162;
+const int btnJoinMoreY = 430;
+const int btnJoinMoreW = 74;
+const int btnJoinMoreH = 38;
+
+const int btnJoinConnectX = 241;
 const int btnJoinConnectY = 430;
-const int btnJoinConnectW = 90;
+const int btnJoinConnectW = 74;
 const int btnJoinConnectH = 38;
 
 const int btnJoinIpBackX = 20;
@@ -776,14 +785,15 @@ void drawJoinKeypad() {
 }
 
 void drawJoinNetworkList() {
-  for (int i = 0; i < MAX_JOIN_NETWORKS; i++) {
+  for (int i = 0; i < MAX_JOIN_NETWORKS_VISIBLE; i++) {
+    int networkIndex = joinNetworkListOffset + i;
     int y = joinNetworkY + i * (joinNetworkH + joinNetworkGap);
-    uint16_t fillColor = (i == selectedJoinNetwork) ? RGB565_GREEN : RGB565_BLUE;
-    uint16_t textColor = (i == selectedJoinNetwork) ? RGB565_BLACK : RGB565_WHITE;
+    uint16_t fillColor = (networkIndex == selectedJoinNetwork) ? RGB565_GREEN : RGB565_BLUE;
+    uint16_t textColor = (networkIndex == selectedJoinNetwork) ? RGB565_BLACK : RGB565_WHITE;
     char label[32];
 
-    if (i < joinNetworkCount) {
-      snprintf(label, sizeof(label), "%d %s", i + 1, joinNetworks[i].c_str());
+    if (networkIndex < joinNetworkCount) {
+      snprintf(label, sizeof(label), "%d %s", networkIndex + 1, joinNetworks[networkIndex].c_str());
     } else {
       snprintf(label, sizeof(label), "-");
       fillColor = RGB565_BLACK;
@@ -1146,6 +1156,8 @@ void drawJoinSetupScreen() {
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
   drawButton(btnJoinScanX, btnJoinScanY, btnJoinScanW, btnJoinScanH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "SCAN", 2);
+  drawButton(btnJoinMoreX, btnJoinMoreY, btnJoinMoreW, btnJoinMoreH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MORE", 2);
   drawButton(btnJoinConnectX, btnJoinConnectY, btnJoinConnectW, btnJoinConnectH,
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "NEXT", 2);
 }
@@ -1225,6 +1237,7 @@ void stopNetwork() {
 void scanJoinNetworks() {
   joinNetworkCount = 0;
   selectedJoinNetwork = -1;
+  joinNetworkListOffset = 0;
 
   for (int i = 0; i < MAX_JOIN_NETWORKS; i++) {
     joinNetworks[i] = "";
@@ -1263,6 +1276,10 @@ void scanJoinNetworks() {
 
   if (selectedJoinNetwork < 0 && joinNetworkCount > 0) {
     selectedJoinNetwork = 0;
+  }
+
+  if (selectedJoinNetwork >= 0) {
+    joinNetworkListOffset = (selectedJoinNetwork / MAX_JOIN_NETWORKS_VISIBLE) * MAX_JOIN_NETWORKS_VISIBLE;
   }
 
   WiFi.scanDelete();
@@ -1683,12 +1700,15 @@ void handleSettingsTouch(int x, int y) {
 }
 
 void handleJoinSetupTouch(int x, int y) {
-  for (int i = 0; i < joinNetworkCount; i++) {
+  for (int i = 0; i < MAX_JOIN_NETWORKS_VISIBLE; i++) {
+    int networkIndex = joinNetworkListOffset + i;
     int networkY = joinNetworkY + i * (joinNetworkH + joinNetworkGap);
+
+    if (networkIndex >= joinNetworkCount) continue;
 
     if (inRect(x, y, joinNetworkX, networkY, joinNetworkW, joinNetworkH)) {
       beepClick();
-      selectedJoinNetwork = i;
+      selectedJoinNetwork = networkIndex;
       drawJoinNetworkList();
       return;
     }
@@ -1704,6 +1724,21 @@ void handleJoinSetupTouch(int x, int y) {
     beepClick();
     drawJoinScanningScreen();
     scanJoinNetworks();
+    drawJoinSetupScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnJoinMoreX, btnJoinMoreY, btnJoinMoreW, btnJoinMoreH)) {
+    beepClick();
+
+    if (joinNetworkCount > MAX_JOIN_NETWORKS_VISIBLE) {
+      joinNetworkListOffset += MAX_JOIN_NETWORKS_VISIBLE;
+
+      if (joinNetworkListOffset >= joinNetworkCount) {
+        joinNetworkListOffset = 0;
+      }
+    }
+
     drawJoinSetupScreen();
     return;
   }
