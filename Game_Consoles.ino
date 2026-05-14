@@ -1,24 +1,22 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
-// 2026-05-14 23:13 +02:00 - Changed the Host Select SSID page back to four
-// visible SSIDs with smaller list text.
-// 2026-05-14 23:10 +02:00 - Increased text size on the Host Select SSID page
-// and adjusted the visible list layout for readability.
-// 2026-05-14 23:08 +02:00 - Updated the Host waiting screen to show the selected
-// WiFi SSID and Host IP with larger matching text.
-// 2026-05-14 23:00 +02:00 - Added a two-step Host setup flow with selectable
-// SSID names from the epic list and host IP confirmation before starting AP mode.
-// 2026-05-14 22:47 +02:00 - Split Join into two pages: WiFi network selection
-// first, then host IP confirmation with numeric keypad before connecting.
-// 2026-05-14 22:38 +02:00 - Added a Join setup page with WiFi network scanning,
-// selectable SSIDs, IP entry, and fixed connection password Alchemist2026.
+// 2026-05-14 23:31 +02:00 - Added "Connect and Die" and "The LAN of the Free"
+// to the selectable Host SSID list.
+// 2026-05-14 23:27 +02:00 - Expanded the Host Select SSID page to show eight
+// SSID options per page.
+// 2026-05-14 23:24 +02:00 - Changed the frame_000.raw intro hold from 4 seconds
+// to 1 second.
+// 2026-05-14 23:13 +02:00 - Finalized Host Select SSID layout with four visible
+// SSIDs per page, compact list text, and larger Host waiting SSID/IP display.
+// 2026-05-14 23:00 +02:00 - Added two-step Host setup: select an epic SSID,
+// confirm Host IP with keypad, then start AP mode with password Alchemist2026.
+// 2026-05-14 22:47 +02:00 - Added two-step Join setup: select scanned WiFi
+// network, confirm Host IP with keypad, then connect with password Alchemist2026.
 // 2026-05-14 22:18 +02:00 - Added an IP settings page with four editable fields,
 // numeric keypad input, persistent storage, and default IP 192.168.10.1.
 // 2026-05-11 22:06 +02:00 - Moved the Tic Tac Toe Home button to the game mode
 // menu page with Local, Host, Join, and Reset Score.
-// 2026-05-11 22:02 +02:00 - Added a dedicated Home button for Tic Tac Toe
-// screens to return directly to the SD-loaded home screen.
 // 2026-05-11 19:41 +02:00 - Changed the home screen Exit button to reboot the
 // ESP32 instead of blanking the display.
 // 2026-05-11 19:33 +02:00 - Scaled the home screen RAW buttons to fit the
@@ -27,14 +25,12 @@
 // background and Games, Settings, and Exit RAW buttons.
 // 2026-05-11 18:40 +02:00 - Added a 4 second hold on frame_000.raw before the
 // rest of the RAW intro animation plays.
-// 2026-05-11 18:05 +02:00 - Set RAW intro playback back to normal portrait
-// rotation because frame_000.raw was displayed upside down.
-// 2026-05-11 17:51 +02:00 - Replaced the intro player with RAW565 portrait
-// playback, starting from frame_000.raw, using alternate portrait rotation.
+// 2026-05-11 18:05 +02:00 - Finalized RAW565 portrait intro playback at normal
+// rotation, starting from frame_000.raw.
 // 2026-05-11 15:35 +02:00 - Enabled inverted display colors through a dedicated
 // display setting.
-// 2026-05-11 15:27 +02:00 - Added microSD support and a 24-bit BMP boot intro
-// player while keeping local and WiFi gameplay modes.
+// 2026-05-11 15:27 +02:00 - Added microSD support for boot intro and SD-loaded
+// UI assets while keeping local and WiFi gameplay modes.
 // 2026-05-11 14:58 +02:00 - Removed the duplicate sketch compile conflict by
 // keeping Game_Consoles.ino as the active Arduino sketch file.
 // 2026-05-11 14:49 +02:00 - Rebuilt the sketch with a clean structure while
@@ -113,7 +109,9 @@ const char *epicSSIDList[] = {
   "No Free Wi-Fi Here",
   "Get your own Wi-Fi!",
   "Searching for Signal...",
-  "The Golden Wi-Fi"
+  "The Golden Wi-Fi",
+  "Connect and Die",
+  "The LAN of the Free"
 };
 
 const int EPIC_SSID_COUNT = sizeof(epicSSIDList) / sizeof(epicSSIDList[0]);
@@ -173,7 +171,7 @@ bool networkConnected = false;
 char myPlayer = ' ';
 bool myTurn = false;
 
-static const int MAX_HOST_SSID_VISIBLE = 4;
+static const int MAX_HOST_SSID_VISIBLE = 8;
 int selectedHostSSIDIndex = 0;
 int hostSSIDListOffset = 0;
 
@@ -331,10 +329,10 @@ const int btnJoinIpConnectW = 130;
 const int btnJoinIpConnectH = 40;
 
 const int hostSSIDX = 20;
-const int hostSSIDY = 145;
+const int hostSSIDY = 112;
 const int hostSSIDW = 280;
-const int hostSSIDH = 28;
-const int hostSSIDGap = 6;
+const int hostSSIDH = 32;
+const int hostSSIDGap = 5;
 
 const int btnHostBackX = 12;
 const int btnHostBackY = 430;
@@ -372,7 +370,7 @@ static const int INTRO_FIRST_FRAME = 0;
 static const int INTRO_TOTAL_FRAMES = 75;
 static const int INTRO_TARGET_FPS = 65;
 static const int INTRO_ROTATION = 0;
-static const unsigned long INTRO_FIRST_FRAME_HOLD_MS = 4000;
+static const unsigned long INTRO_FIRST_FRAME_HOLD_MS = 1000;
 
 static uint16_t rawDrawBuffer[VIDEO_W * RAW_BLOCK_LINES];
 static uint16_t rawScaleSourceBuffer[homeButtonRawW * homeButtonRawH];
