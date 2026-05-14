@@ -1,6 +1,12 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// 2026-05-14 23:13 +02:00 - Changed the Host Select SSID page back to four
+// visible SSIDs with smaller list text.
+// 2026-05-14 23:10 +02:00 - Increased text size on the Host Select SSID page
+// and adjusted the visible list layout for readability.
+// 2026-05-14 23:08 +02:00 - Updated the Host waiting screen to show the selected
+// WiFi SSID and Host IP with larger matching text.
 // 2026-05-14 23:00 +02:00 - Added a two-step Host setup flow with selectable
 // SSID names from the epic list and host IP confirmation before starting AP mode.
 // 2026-05-14 22:47 +02:00 - Split Join into two pages: WiFi network selection
@@ -983,14 +989,20 @@ void drawMenuScreen() {
 void drawWaitingHostScreen() {
   gfx->fillScreen(RGB565_BLACK);
 
-  drawCenteredText("HOST ACTIV", 60, 3, RGB565_GREEN);
-  drawCenteredText("Tu esti X", 110, 2, RGB565_WHITE);
+  drawCenteredText("HOST ACTIV", 28, 3, RGB565_GREEN);
+  drawCenteredText("Tu esti X", 72, 2, RGB565_WHITE);
 
-  drawCenteredText("Conecteaza al doilea", 180, 2, RGB565_YELLOW);
-  drawCenteredText("setup cu JOIN", 210, 2, RGB565_YELLOW);
+  drawCenteredText("Asteapta oponentul", 118, 2, RGB565_YELLOW);
+  drawCenteredText("sa intre cu JOIN", 145, 2, RGB565_YELLOW);
 
-  drawCenteredText("SSID:", 280, 2, RGB565_WHITE);
-  drawCenteredText(epicSSIDList[selectedHostSSIDIndex], 310, 1, RGB565_CYAN);
+  drawCenteredText("WiFi:", 195, 2, RGB565_WHITE);
+  drawCenteredText(epicSSIDList[selectedHostSSIDIndex], 222, 2, RGB565_CYAN);
+
+  char ipLine[32];
+  snprintf(ipLine, sizeof(ipLine), "%u.%u.%u.%u",
+           ipParts[0], ipParts[1], ipParts[2], ipParts[3]);
+  drawCenteredText("IP:", 270, 2, RGB565_WHITE);
+  drawCenteredText(ipLine, 297, 2, RGB565_CYAN);
 
   drawButton(btnMenuX, btnMenuY, btnMenuW, btnMenuH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENIU", 2);
