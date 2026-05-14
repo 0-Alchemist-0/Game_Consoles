@@ -1,6 +1,12 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// 2026-05-14 22:47 +02:00 - Split Join into two pages: WiFi network selection
+// first, then host IP confirmation with numeric keypad before connecting.
+// 2026-05-14 22:38 +02:00 - Added a Join setup page with WiFi network scanning,
+// selectable SSIDs, IP entry, and fixed connection password Alchemist2026.
+// 2026-05-14 22:18 +02:00 - Added an IP settings page with four editable fields,
+// numeric keypad input, persistent storage, and default IP 192.168.10.1.
 // 2026-05-11 22:06 +02:00 - Moved the Tic Tac Toe Home button to the game mode
 // menu page with Local, Host, Join, and Reset Score.
 // 2026-05-11 22:02 +02:00 - Added a dedicated Home button for Tic Tac Toe
@@ -66,10 +72,11 @@ static const uint8_t FT6336_ADDR = 0x38;
 // NETWORK CONFIG
 // ============================================================================
 const char *AP_SSID = "TicTacToe_ESP32";
-const char *AP_PASS = "12345678";
+const char *AP_PASS = "Alchemist2026";
+const char *JOIN_WIFI_PASS = "Alchemist2026";
 
 const uint16_t NET_PORT = 3333;
-IPAddress HOST_IP(192, 168, 4, 1);
+IPAddress HOST_IP(192, 168, 10, 1);
 
 WiFiServer gameServer(NET_PORT);
 WiFiClient netClient;
@@ -100,6 +107,8 @@ enum AppState {
   STATE_MENU,
   STATE_SETTINGS,
   STATE_EXIT,
+  STATE_JOIN_SETUP,
+  STATE_JOIN_IP,
   STATE_WAITING_HOST,
   STATE_CONNECTING_JOIN,
   STATE_PLAYING,
@@ -118,6 +127,16 @@ bool isHost = false;
 bool networkConnected = false;
 char myPlayer = ' ';
 bool myTurn = false;
+
+static const int MAX_JOIN_NETWORKS = 4;
+String joinNetworks[MAX_JOIN_NETWORKS];
+int joinNetworkCount = 0;
+int selectedJoinNetwork = -1;
+
+uint8_t ipParts[4] = {192, 168, 10, 1};
+char ipFieldText[4][4] = {"192", "168", "10", "1"};
+int activeIpField = 0;
+bool activeIpFieldNeedsClear = true;
 
 int scoreX = 0;
 int scoreO = 0;
@@ -200,6 +219,67 @@ const int homeTouchH = 55;
 const int homeGamesTouchY = 287;
 const int homeSettingsTouchY = 336;
 const int homeExitTouchY = 384;
+
+const int settingsFieldX = 18;
+const int settingsFieldY = 92;
+const int settingsFieldW = 62;
+const int settingsFieldH = 44;
+const int settingsFieldGap = 14;
+
+const int keyPadX = 35;
+const int keyPadY = 165;
+const int keyPadW = 70;
+const int keyPadH = 42;
+const int keyPadGapX = 15;
+const int keyPadGapY = 11;
+
+const int btnSettingsHomeX = 20;
+const int btnSettingsHomeY = 420;
+const int btnSettingsHomeW = 130;
+const int btnSettingsHomeH = 40;
+
+const int btnSettingsSaveX = 170;
+const int btnSettingsSaveY = 420;
+const int btnSettingsSaveW = 130;
+const int btnSettingsSaveH = 40;
+
+const int joinNetworkX = 20;
+const int joinNetworkY = 145;
+const int joinNetworkW = 280;
+const int joinNetworkH = 28;
+const int joinNetworkGap = 6;
+
+const int joinKeyPadX = 35;
+const int joinKeyPadY = 282;
+const int joinKeyPadW = 70;
+const int joinKeyPadH = 30;
+const int joinKeyPadGapX = 15;
+const int joinKeyPadGapY = 6;
+
+const int btnJoinBackX = 12;
+const int btnJoinBackY = 430;
+const int btnJoinBackW = 90;
+const int btnJoinBackH = 38;
+
+const int btnJoinScanX = 115;
+const int btnJoinScanY = 430;
+const int btnJoinScanW = 90;
+const int btnJoinScanH = 38;
+
+const int btnJoinConnectX = 218;
+const int btnJoinConnectY = 430;
+const int btnJoinConnectW = 90;
+const int btnJoinConnectH = 38;
+
+const int btnJoinIpBackX = 20;
+const int btnJoinIpBackY = 420;
+const int btnJoinIpBackW = 130;
+const int btnJoinIpBackH = 40;
+
+const int btnJoinIpConnectX = 170;
+const int btnJoinIpConnectY = 420;
+const int btnJoinIpConnectW = 130;
+const int btnJoinIpConnectH = 40;
 
 // ============================================================================
 // RAW565 VIDEO PLAYER - /intro/frame_000.raw ... /intro/frame_074.raw
@@ -387,6 +467,62 @@ void resetScore() {
 }
 
 // ============================================================================
+// NETWORK SETTINGS
+// ============================================================================
+void updateHostIpFromParts() {
+  HOST_IP = IPAddress(ipParts[0], ipParts[1], ipParts[2], ipParts[3]);
+}
+
+void updateIpTextFromParts() {
+  for (int i = 0; i < 4; i++) {
+    snprintf(ipFieldText[i], sizeof(ipFieldText[i]), "%u", ipParts[i]);
+  }
+}
+
+uint8_t parseIpFieldValue(int field) {
+  if (field < 0 || field > 3) return 0;
+
+  int value = atoi(ipFieldText[field]);
+
+  if (value < 0) value = 0;
+  if (value > 255) value = 255;
+
+  return (uint8_t)value;
+}
+
+void applyIpTextToParts() {
+  for (int i = 0; i < 4; i++) {
+    ipParts[i] = parseIpFieldValue(i);
+  }
+
+  updateIpTextFromParts();
+  updateHostIpFromParts();
+}
+
+void loadNetworkSettings() {
+  prefs.begin("ttt_cfg", true);
+  ipParts[0] = prefs.getUChar("ip0", 192);
+  ipParts[1] = prefs.getUChar("ip1", 168);
+  ipParts[2] = prefs.getUChar("ip2", 10);
+  ipParts[3] = prefs.getUChar("ip3", 1);
+  prefs.end();
+
+  updateIpTextFromParts();
+  updateHostIpFromParts();
+}
+
+void saveNetworkSettings() {
+  applyIpTextToParts();
+
+  prefs.begin("ttt_cfg", false);
+  prefs.putUChar("ip0", ipParts[0]);
+  prefs.putUChar("ip1", ipParts[1]);
+  prefs.putUChar("ip2", ipParts[2]);
+  prefs.putUChar("ip3", ipParts[3]);
+  prefs.end();
+}
+
+// ============================================================================
 // AUDIO
 // ============================================================================
 void beepMove()  { tone(PIN_BUZZER, 1000, 40); }
@@ -473,6 +609,112 @@ void drawButton(int x, int y, int w, int h, uint16_t fillColor, uint16_t borderC
   gfx->setCursor(tx, ty);
   gfx->setTextColor(textColor);
   gfx->print(label);
+}
+
+void drawTextInRect(int x, int y, int w, int h, const char *label, int textSize, uint16_t color) {
+  int16_t x1, y1;
+  uint16_t tw, th;
+
+  gfx->setTextSize(textSize);
+  gfx->getTextBounds((char *)label, 0, 0, &x1, &y1, &tw, &th);
+
+  int tx = x + (w - tw) / 2;
+  int ty = y + (h - th) / 2 + 2;
+
+  gfx->setCursor(tx, ty);
+  gfx->setTextColor(color);
+  gfx->print(label);
+}
+
+void drawIpFields() {
+  for (int i = 0; i < 4; i++) {
+    int x = settingsFieldX + i * (settingsFieldW + settingsFieldGap);
+    uint16_t fillColor = (i == activeIpField) ? RGB565_BLUE : RGB565_BLACK;
+    uint16_t borderColor = (i == activeIpField) ? RGB565_YELLOW : RGB565_CYAN;
+
+    gfx->fillRoundRect(x, settingsFieldY, settingsFieldW, settingsFieldH, 8, fillColor);
+    gfx->drawRoundRect(x, settingsFieldY, settingsFieldW, settingsFieldH, 8, borderColor);
+    drawTextInRect(x, settingsFieldY, settingsFieldW, settingsFieldH, ipFieldText[i], 2, RGB565_WHITE);
+
+    if (i < 3) {
+      int dotX = x + settingsFieldW + 4;
+      drawTextInRect(dotX, settingsFieldY, settingsFieldGap, settingsFieldH, ".", 2, RGB565_WHITE);
+    }
+  }
+}
+
+void drawSettingsKeypad() {
+  const char *labels[12] = {
+    "1", "2", "3",
+    "4", "5", "6",
+    "7", "8", "9",
+    "DEL", "0", "NEXT"
+  };
+
+  for (int i = 0; i < 12; i++) {
+    int col = i % 3;
+    int row = i / 3;
+    int x = keyPadX + col * (keyPadW + keyPadGapX);
+    int y = keyPadY + row * (keyPadH + keyPadGapY);
+
+    uint16_t fillColor = RGB565_BLUE;
+    uint16_t textColor = RGB565_WHITE;
+
+    if (i == 9) fillColor = RGB565_RED;
+    if (i == 11) {
+      fillColor = RGB565_GREEN;
+      textColor = RGB565_BLACK;
+    }
+
+    drawButton(x, y, keyPadW, keyPadH, fillColor, RGB565_WHITE, textColor, labels[i], 2);
+  }
+}
+
+void drawJoinKeypad() {
+  const char *labels[12] = {
+    "1", "2", "3",
+    "4", "5", "6",
+    "7", "8", "9",
+    "DEL", "0", "NEXT"
+  };
+
+  for (int i = 0; i < 12; i++) {
+    int col = i % 3;
+    int row = i / 3;
+    int x = joinKeyPadX + col * (joinKeyPadW + joinKeyPadGapX);
+    int y = joinKeyPadY + row * (joinKeyPadH + joinKeyPadGapY);
+
+    uint16_t fillColor = RGB565_BLUE;
+    uint16_t textColor = RGB565_WHITE;
+
+    if (i == 9) fillColor = RGB565_RED;
+    if (i == 11) {
+      fillColor = RGB565_GREEN;
+      textColor = RGB565_BLACK;
+    }
+
+    drawButton(x, y, joinKeyPadW, joinKeyPadH, fillColor, RGB565_WHITE, textColor, labels[i], 2);
+  }
+}
+
+void drawJoinNetworkList() {
+  for (int i = 0; i < MAX_JOIN_NETWORKS; i++) {
+    int y = joinNetworkY + i * (joinNetworkH + joinNetworkGap);
+    uint16_t fillColor = (i == selectedJoinNetwork) ? RGB565_GREEN : RGB565_BLUE;
+    uint16_t textColor = (i == selectedJoinNetwork) ? RGB565_BLACK : RGB565_WHITE;
+    char label[32];
+
+    if (i < joinNetworkCount) {
+      snprintf(label, sizeof(label), "%d %s", i + 1, joinNetworks[i].c_str());
+    } else {
+      snprintf(label, sizeof(label), "-");
+      fillColor = RGB565_BLACK;
+      textColor = RGB565_WHITE;
+    }
+
+    drawButton(joinNetworkX, y, joinNetworkW, joinNetworkH,
+               fillColor, RGB565_WHITE, textColor, label, 1);
+  }
 }
 
 // ============================================================================
@@ -665,8 +907,16 @@ void drawConnectingJoinScreen() {
   drawCenteredText("JOIN", 70, 3, RGB565_BLUE);
   drawCenteredText("Tu esti O", 120, 2, RGB565_WHITE);
 
-  drawCenteredText("Caut host...", 200, 2, RGB565_YELLOW);
-  drawCenteredText(AP_SSID, 235, 2, RGB565_CYAN);
+  drawCenteredText("Connecting...", 190, 2, RGB565_YELLOW);
+
+  if (selectedJoinNetwork >= 0 && selectedJoinNetwork < joinNetworkCount) {
+    drawCenteredText(joinNetworks[selectedJoinNetwork].c_str(), 225, 1, RGB565_CYAN);
+  }
+
+  char ipLine[32];
+  snprintf(ipLine, sizeof(ipLine), "%u.%u.%u.%u",
+           ipParts[0], ipParts[1], ipParts[2], ipParts[3]);
+  drawCenteredText(ipLine, 255, 2, RGB565_WHITE);
 
   drawButton(btnMenuX, btnMenuY, btnMenuW, btnMenuH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENIU", 2);
@@ -761,11 +1011,54 @@ void drawSettingsScreen() {
   appState = STATE_SETTINGS;
   gfx->fillScreen(RGB565_BLACK);
 
-  drawCenteredText("SETTINGS", 70, 3, RGB565_CYAN);
-  drawCenteredText("No settings available", 145, 2, RGB565_YELLOW);
+  drawCenteredText("SETTINGS", 24, 3, RGB565_CYAN);
+  drawCenteredText("HOST IP", 62, 2, RGB565_YELLOW);
 
-  drawButton(btnMenuX, btnMenuY, btnMenuW, btnMenuH,
+  drawIpFields();
+  drawSettingsKeypad();
+
+  drawButton(btnSettingsHomeX, btnSettingsHomeY, btnSettingsHomeW, btnSettingsHomeH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "HOME", 2);
+  drawButton(btnSettingsSaveX, btnSettingsSaveY, btnSettingsSaveW, btnSettingsSaveH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "SAVE", 2);
+}
+
+void drawJoinScanningScreen() {
+  gfx->fillScreen(RGB565_BLACK);
+  drawCenteredText("JOIN", 58, 3, RGB565_CYAN);
+  drawCenteredText("Scanning WiFi...", 145, 2, RGB565_YELLOW);
+}
+
+void drawJoinSetupScreen() {
+  appState = STATE_JOIN_SETUP;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("JOIN", 18, 3, RGB565_CYAN);
+  drawCenteredText("Select WiFi", 64, 2, RGB565_YELLOW);
+  drawJoinNetworkList();
+
+  drawButton(btnJoinBackX, btnJoinBackY, btnJoinBackW, btnJoinBackH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+  drawButton(btnJoinScanX, btnJoinScanY, btnJoinScanW, btnJoinScanH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "SCAN", 2);
+  drawButton(btnJoinConnectX, btnJoinConnectY, btnJoinConnectW, btnJoinConnectH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "NEXT", 2);
+}
+
+void drawJoinIpScreen() {
+  appState = STATE_JOIN_IP;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("JOIN", 24, 3, RGB565_CYAN);
+  drawCenteredText("HOST IP", 62, 2, RGB565_YELLOW);
+
+  drawIpFields();
+  drawSettingsKeypad();
+
+  drawButton(btnJoinIpBackX, btnJoinIpBackY, btnJoinIpBackW, btnJoinIpBackH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+  drawButton(btnJoinIpConnectX, btnJoinIpConnectY, btnJoinIpConnectW, btnJoinIpConnectH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "JOIN", 2);
 }
 
 // ============================================================================
@@ -792,6 +1085,70 @@ void stopNetwork() {
   myTurn = false;
 }
 
+void scanJoinNetworks() {
+  joinNetworkCount = 0;
+  selectedJoinNetwork = -1;
+
+  for (int i = 0; i < MAX_JOIN_NETWORKS; i++) {
+    joinNetworks[i] = "";
+  }
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+
+  int foundNetworks = WiFi.scanNetworks(false, true);
+
+  for (int i = 0; i < foundNetworks && joinNetworkCount < MAX_JOIN_NETWORKS; i++) {
+    String ssid = WiFi.SSID(i);
+
+    if (ssid.length() == 0) continue;
+
+    bool duplicate = false;
+
+    for (int j = 0; j < joinNetworkCount; j++) {
+      if (joinNetworks[j] == ssid) {
+        duplicate = true;
+        break;
+      }
+    }
+
+    if (duplicate) continue;
+
+    joinNetworks[joinNetworkCount] = ssid;
+
+    if (ssid == AP_SSID) {
+      selectedJoinNetwork = joinNetworkCount;
+    }
+
+    joinNetworkCount++;
+  }
+
+  if (selectedJoinNetwork < 0 && joinNetworkCount > 0) {
+    selectedJoinNetwork = 0;
+  }
+
+  WiFi.scanDelete();
+}
+
+void beginSelectedJoinConnection() {
+  if (selectedJoinNetwork < 0 || selectedJoinNetwork >= joinNetworkCount) return;
+
+  saveNetworkSettings();
+
+  localGame = false;
+  isHost = false;
+  myPlayer = 'O';
+  myTurn = false;
+  networkConnected = false;
+
+  appState = STATE_CONNECTING_JOIN;
+  drawConnectingJoinScreen();
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(joinNetworks[selectedJoinNetwork].c_str(), JOIN_WIFI_PASS);
+}
+
 void startLocalGame() {
   stopNetwork();
 
@@ -812,6 +1169,7 @@ void startHostMode() {
   myTurn = true;
 
   WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(HOST_IP, HOST_IP, IPAddress(255, 255, 255, 0));
   WiFi.softAP(AP_SSID, AP_PASS);
 
   gameServer.begin();
@@ -828,11 +1186,13 @@ void startJoinMode() {
   myPlayer = 'O';
   myTurn = false;
 
-  appState = STATE_CONNECTING_JOIN;
-  drawConnectingJoinScreen();
+  activeIpField = 0;
+  activeIpFieldNeedsClear = true;
+  updateIpTextFromParts();
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(AP_SSID, AP_PASS);
+  drawJoinScanningScreen();
+  scanJoinNetworks();
+  drawJoinSetupScreen();
 }
 
 void startNetworkGame() {
@@ -1076,10 +1436,177 @@ void handleHomeTouch(int x, int y) {
   }
 }
 
+void appendDigitToActiveIpField(int digit) {
+  if (activeIpField < 0 || activeIpField > 3) return;
+
+  if (activeIpFieldNeedsClear) {
+    ipFieldText[activeIpField][0] = '\0';
+    activeIpFieldNeedsClear = false;
+  }
+
+  size_t len = strlen(ipFieldText[activeIpField]);
+
+  if (len >= 3) return;
+
+  ipFieldText[activeIpField][len] = (char)('0' + digit);
+  ipFieldText[activeIpField][len + 1] = '\0';
+}
+
+void deleteDigitFromActiveIpField() {
+  if (activeIpField < 0 || activeIpField > 3) return;
+
+  if (activeIpFieldNeedsClear) {
+    ipFieldText[activeIpField][0] = '\0';
+    activeIpFieldNeedsClear = false;
+    return;
+  }
+
+  size_t len = strlen(ipFieldText[activeIpField]);
+
+  if (len > 0) {
+    ipFieldText[activeIpField][len - 1] = '\0';
+  }
+}
+
+void selectNextIpField() {
+  activeIpField = (activeIpField + 1) % 4;
+  activeIpFieldNeedsClear = true;
+}
+
+void handleIpKeypadAction(int keyIndex) {
+  if (keyIndex == 9) {
+    deleteDigitFromActiveIpField();
+  } else if (keyIndex == 11) {
+    selectNextIpField();
+  } else {
+    int digit = (keyIndex == 10) ? 0 : (keyIndex + 1);
+    appendDigitToActiveIpField(digit);
+  }
+}
+
 void handleSettingsTouch(int x, int y) {
-  if (inRect(x, y, btnMenuX, btnMenuY, btnMenuW, btnMenuH)) {
+  for (int i = 0; i < 4; i++) {
+    int fieldX = settingsFieldX + i * (settingsFieldW + settingsFieldGap);
+
+    if (inRect(x, y, fieldX, settingsFieldY, settingsFieldW, settingsFieldH)) {
+      beepClick();
+      activeIpField = i;
+      activeIpFieldNeedsClear = true;
+      drawIpFields();
+      return;
+    }
+  }
+
+  for (int i = 0; i < 12; i++) {
+    int col = i % 3;
+    int row = i / 3;
+    int keyX = keyPadX + col * (keyPadW + keyPadGapX);
+    int keyY = keyPadY + row * (keyPadH + keyPadGapY);
+
+    if (!inRect(x, y, keyX, keyY, keyPadW, keyPadH)) continue;
+
     beepClick();
+
+    handleIpKeypadAction(i);
+
+    drawIpFields();
+    return;
+  }
+
+  if (inRect(x, y, btnSettingsSaveX, btnSettingsSaveY, btnSettingsSaveW, btnSettingsSaveH)) {
+    beepClick();
+    saveNetworkSettings();
+    activeIpFieldNeedsClear = true;
+    drawSettingsScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnSettingsHomeX, btnSettingsHomeY, btnSettingsHomeW, btnSettingsHomeH)) {
+    beepClick();
+    saveNetworkSettings();
     drawHomeScreen();
+    return;
+  }
+}
+
+void handleJoinSetupTouch(int x, int y) {
+  for (int i = 0; i < joinNetworkCount; i++) {
+    int networkY = joinNetworkY + i * (joinNetworkH + joinNetworkGap);
+
+    if (inRect(x, y, joinNetworkX, networkY, joinNetworkW, joinNetworkH)) {
+      beepClick();
+      selectedJoinNetwork = i;
+      drawJoinNetworkList();
+      return;
+    }
+  }
+
+  if (inRect(x, y, btnJoinBackX, btnJoinBackY, btnJoinBackW, btnJoinBackH)) {
+    beepClick();
+    returnToMenu(false);
+    return;
+  }
+
+  if (inRect(x, y, btnJoinScanX, btnJoinScanY, btnJoinScanW, btnJoinScanH)) {
+    beepClick();
+    drawJoinScanningScreen();
+    scanJoinNetworks();
+    drawJoinSetupScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnJoinConnectX, btnJoinConnectY, btnJoinConnectW, btnJoinConnectH)) {
+    if (selectedJoinNetwork >= 0 && selectedJoinNetwork < joinNetworkCount) {
+      beepClick();
+      activeIpField = 0;
+      activeIpFieldNeedsClear = true;
+      updateIpTextFromParts();
+      drawJoinIpScreen();
+    } else {
+      beepClick();
+      drawJoinSetupScreen();
+    }
+    return;
+  }
+}
+
+void handleJoinIpTouch(int x, int y) {
+  for (int i = 0; i < 4; i++) {
+    int fieldX = settingsFieldX + i * (settingsFieldW + settingsFieldGap);
+
+    if (inRect(x, y, fieldX, settingsFieldY, settingsFieldW, settingsFieldH)) {
+      beepClick();
+      activeIpField = i;
+      activeIpFieldNeedsClear = true;
+      drawIpFields();
+      return;
+    }
+  }
+
+  for (int i = 0; i < 12; i++) {
+    int col = i % 3;
+    int row = i / 3;
+    int keyX = keyPadX + col * (keyPadW + keyPadGapX);
+    int keyY = keyPadY + row * (keyPadH + keyPadGapY);
+
+    if (!inRect(x, y, keyX, keyY, keyPadW, keyPadH)) continue;
+
+    beepClick();
+    handleIpKeypadAction(i);
+    drawIpFields();
+    return;
+  }
+
+  if (inRect(x, y, btnJoinIpBackX, btnJoinIpBackY, btnJoinIpBackW, btnJoinIpBackH)) {
+    beepClick();
+    drawJoinSetupScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnJoinIpConnectX, btnJoinIpConnectY, btnJoinIpConnectW, btnJoinIpConnectH)) {
+    beepStart();
+    beginSelectedJoinConnection();
+    return;
   }
 }
 
@@ -1127,6 +1654,10 @@ void handleTouch(int x, int y) {
     handleMenuTouch(x, y);
   } else if (appState == STATE_SETTINGS) {
     handleSettingsTouch(x, y);
+  } else if (appState == STATE_JOIN_SETUP) {
+    handleJoinSetupTouch(x, y);
+  } else if (appState == STATE_JOIN_IP) {
+    handleJoinIpTouch(x, y);
   } else if (appState == STATE_WAITING_HOST || appState == STATE_CONNECTING_JOIN) {
     handleWaitingTouch(x, y);
   } else if (appState == STATE_PLAYING) {
@@ -1195,6 +1726,7 @@ void setup() {
   }
 
   loadScore();
+  loadNetworkSettings();
   clearBoard();
   WiFi.mode(WIFI_OFF);
 
