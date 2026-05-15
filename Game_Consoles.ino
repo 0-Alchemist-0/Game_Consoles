@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// 2026-05-15 21:52 +02:00 - Added a Games hub page with Tic Tac Toe,
+// Rock-Paper-Scissors, Battleship, and Home navigation.
 // 2026-05-14 23:38 +02:00 - Expanded Join WiFi selection to show eight SSIDs
 // per page and added MORE pagination for additional scanned networks.
 // 2026-05-14 23:31 +02:00 - Added "Connect and Die" and "The LAN of the Free"
@@ -147,6 +149,9 @@ bool sdReady = false;
 // ============================================================================
 enum AppState {
   STATE_HOME,
+  STATE_GAMES,
+  STATE_ROCK_PAPER_SCISSORS,
+  STATE_BATTLESHIP,
   STATE_MENU,
   STATE_SETTINGS,
   STATE_EXIT,
@@ -249,6 +254,20 @@ const int btnTttHomeX = 60;
 const int btnTttHomeY = 420;
 const int btnTttHomeW = 200;
 const int btnTttHomeH = 45;
+
+const int btnGamesX = 35;
+const int btnGamesTttY = 135;
+const int btnGamesRpsY = 205;
+const int btnGamesBattleshipY = 275;
+const int btnGamesHomeY = 390;
+const int btnGamesW = 250;
+const int btnGamesH = 52;
+const int btnGamesHomeH = 45;
+
+const int btnEmptyBackX = 90;
+const int btnEmptyBackY = 420;
+const int btnEmptyBackW = 140;
+const int btnEmptyBackH = 40;
 
 const int homeButtonRawW = 320;
 const int homeButtonRawH = 90;
@@ -994,6 +1013,35 @@ void drawMenuScreen() {
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "HOME", 2);
 }
 
+void drawGamesScreen() {
+  appState = STATE_GAMES;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("GAMES", 35, 3, RGB565_CYAN);
+
+  drawButton(btnGamesX, btnGamesTttY, btnGamesW, btnGamesH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "TIC TAC TOE", 2);
+
+  drawButton(btnGamesX, btnGamesRpsY, btnGamesW, btnGamesH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "ROCK-PAPER-SCISSORS", 2);
+
+  drawButton(btnGamesX, btnGamesBattleshipY, btnGamesW, btnGamesH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BATTLESHIP", 2);
+
+  drawButton(btnGamesX, btnGamesHomeY, btnGamesW, btnGamesHomeH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "HOME", 2);
+}
+
+void drawEmptyGameScreen(const char *title, int state) {
+  appState = (AppState)state;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText(title, 110, 2, RGB565_CYAN);
+
+  drawButton(btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+}
+
 void drawWaitingHostScreen() {
   gfx->fillScreen(RGB565_BLACK);
 
@@ -1585,8 +1633,7 @@ void handleMenuTouch(int x, int y) {
 void handleHomeTouch(int x, int y) {
   if (inRect(x, y, homeTouchX, homeGamesTouchY, homeTouchW, homeTouchH)) {
     beepClick();
-    appState = STATE_MENU;
-    drawMenuScreen();
+    drawGamesScreen();
     return;
   }
 
@@ -1602,6 +1649,41 @@ void handleHomeTouch(int x, int y) {
     gfx->fillScreen(RGB565_BLACK);
     delay(250);
     ESP.restart();
+    return;
+  }
+}
+
+void handleGamesTouch(int x, int y) {
+  if (inRect(x, y, btnGamesX, btnGamesTttY, btnGamesW, btnGamesH)) {
+    beepClick();
+    appState = STATE_MENU;
+    drawMenuScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnGamesX, btnGamesRpsY, btnGamesW, btnGamesH)) {
+    beepClick();
+    drawEmptyGameScreen("ROCK-PAPER-SCISSORS", STATE_ROCK_PAPER_SCISSORS);
+    return;
+  }
+
+  if (inRect(x, y, btnGamesX, btnGamesBattleshipY, btnGamesW, btnGamesH)) {
+    beepClick();
+    drawEmptyGameScreen("BATTLESHIP", STATE_BATTLESHIP);
+    return;
+  }
+
+  if (inRect(x, y, btnGamesX, btnGamesHomeY, btnGamesW, btnGamesHomeH)) {
+    beepClick();
+    returnToHome(false);
+    return;
+  }
+}
+
+void handleEmptyGameTouch(int x, int y) {
+  if (inRect(x, y, btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH)) {
+    beepClick();
+    drawGamesScreen();
     return;
   }
 }
@@ -1921,6 +2003,10 @@ void handleResultTouch(int x, int y) {
 void handleTouch(int x, int y) {
   if (appState == STATE_HOME) {
     handleHomeTouch(x, y);
+  } else if (appState == STATE_GAMES) {
+    handleGamesTouch(x, y);
+  } else if (appState == STATE_ROCK_PAPER_SCISSORS || appState == STATE_BATTLESHIP) {
+    handleEmptyGameTouch(x, y);
   } else if (appState == STATE_MENU) {
     handleMenuTouch(x, y);
   } else if (appState == STATE_SETTINGS) {
