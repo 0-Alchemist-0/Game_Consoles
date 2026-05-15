@@ -1,6 +1,10 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// 2026-05-15 23:01 +02:00 - Added the missing RGB888 to RGB565 helper used by
+// the Rock-Paper-Scissors wheel colors.
+// 2026-05-15 22:56 +02:00 - Replaced the Rock-Paper-Scissors placeholder with
+// a local Rock-Paper-Scissors-Lizard-Spock flow, menu, scores, and result page.
 // 2026-05-15 21:52 +02:00 - Added a Games hub page with Tic Tac Toe,
 // Rock-Paper-Scissors, Battleship, and Home navigation.
 // 2026-05-14 23:38 +02:00 - Expanded Join WiFi selection to show eight SSIDs
@@ -49,6 +53,7 @@
 #include <SPI.h>
 #include <SD.h>
 #include <FS.h>
+#include <math.h>
 
 // ============================================================================
 // HARDWARE CONFIG
@@ -151,6 +156,10 @@ enum AppState {
   STATE_HOME,
   STATE_GAMES,
   STATE_ROCK_PAPER_SCISSORS,
+  STATE_RPS_CHOICE_P1,
+  STATE_RPS_CHOICE_P2,
+  STATE_RPS_RESULT,
+  STATE_RPS_PLACEHOLDER,
   STATE_BATTLESHIP,
   STATE_MENU,
   STATE_SETTINGS,
@@ -197,6 +206,22 @@ bool activeIpFieldNeedsClear = true;
 int scoreX = 0;
 int scoreO = 0;
 int scoreDraw = 0;
+
+const char *rpsChoiceLabels[] = {
+  "ROCK",
+  "PAPER",
+  "SCISSORS",
+  "LIZARD",
+  "SPOCK"
+};
+
+int rpsP1Choice = -1;
+int rpsP2Choice = -1;
+int rpsWinner = 0;
+int rpsScoreP1 = 0;
+int rpsScoreP2 = 0;
+int rpsScoreDraw = 0;
+const char *rpsPlaceholderTitle = "RPS";
 
 bool touchWasDown = false;
 unsigned long lastTouchTime = 0;
@@ -268,6 +293,14 @@ const int btnEmptyBackX = 90;
 const int btnEmptyBackY = 420;
 const int btnEmptyBackW = 140;
 const int btnEmptyBackH = 40;
+
+const int rpsWheelCenterX = 160;
+const int rpsWheelCenterY = 250;
+const int rpsWheelRadius = 135;
+const int btnRpsMenuX = 90;
+const int btnRpsMenuY = 420;
+const int btnRpsMenuW = 140;
+const int btnRpsMenuH = 40;
 
 const int homeButtonRawW = 320;
 const int homeButtonRawH = 90;
@@ -572,6 +605,29 @@ void resetScore() {
   saveScore();
 }
 
+void loadRpsScore() {
+  prefs.begin("rps_score", true);
+  rpsScoreP1 = prefs.getInt("p1", 0);
+  rpsScoreP2 = prefs.getInt("p2", 0);
+  rpsScoreDraw = prefs.getInt("d", 0);
+  prefs.end();
+}
+
+void saveRpsScore() {
+  prefs.begin("rps_score", false);
+  prefs.putInt("p1", rpsScoreP1);
+  prefs.putInt("p2", rpsScoreP2);
+  prefs.putInt("d", rpsScoreDraw);
+  prefs.end();
+}
+
+void resetRpsScore() {
+  rpsScoreP1 = 0;
+  rpsScoreP2 = 0;
+  rpsScoreDraw = 0;
+  saveRpsScore();
+}
+
 // ============================================================================
 // NETWORK SETTINGS
 // ============================================================================
@@ -677,6 +733,12 @@ bool readTouchScreen(int &sx, int &sy) {
 // ============================================================================
 // DRAW HELPERS
 // ============================================================================
+uint16_t rgb888to565(uint8_t r, uint8_t g, uint8_t b) {
+  return ((r & 0xF8) << 8) |
+         ((g & 0xFC) << 3) |
+         (b >> 3);
+}
+
 bool inRect(int x, int y, int rx, int ry, int rw, int rh) {
   return (x >= rx && x < rx + rw && y >= ry && y < ry + rh);
 }
@@ -730,6 +792,97 @@ void drawTextInRect(int x, int y, int w, int h, const char *label, int textSize,
   gfx->setCursor(tx, ty);
   gfx->setTextColor(color);
   gfx->print(label);
+}
+
+void drawRpsSegment(int centerX, int centerY, int radius, float startDeg, float endDeg, uint16_t color) {
+  const float degToRad = 0.01745329252f;
+  float startRad = startDeg * degToRad;
+  int prevX = centerX + (int)(cos(startRad) * radius);
+  int prevY = centerY + (int)(sin(startRad) * radius);
+
+  for (float angle = startDeg + 3.0f; angle <= endDeg + 0.1f; angle += 3.0f) {
+    float rad = angle * degToRad;
+    int x = centerX + (int)(cos(rad) * radius);
+    int y = centerY + (int)(sin(rad) * radius);
+
+    gfx->fillTriangle(centerX, centerY, prevX, prevY, x, y, color);
+    prevX = x;
+    prevY = y;
+  }
+}
+
+void drawRpsWheelLabel(const char *label, int x, int y, int size) {
+  int16_t x1, y1;
+  uint16_t w, h;
+
+  gfx->setTextSize(size);
+  gfx->getTextBounds((char *)label, 0, 0, &x1, &y1, &w, &h);
+  gfx->setCursor(x - (int)w / 2, y - (int)h / 2);
+  gfx->setTextColor(RGB565_BLACK);
+  gfx->print(label);
+}
+
+void drawRpsWheel() {
+  uint16_t colors[5] = {
+    rgb888to565(150, 170, 190),
+    rgb888to565(210, 232, 246),
+    rgb888to565(0, 135, 215),
+    rgb888to565(105, 210, 45),
+    rgb888to565(245, 145, 18)
+  };
+
+  drawRpsSegment(rpsWheelCenterX, rpsWheelCenterY, rpsWheelRadius, -126, -54, colors[0]);
+  drawRpsSegment(rpsWheelCenterX, rpsWheelCenterY, rpsWheelRadius, -54, 18, colors[1]);
+  drawRpsSegment(rpsWheelCenterX, rpsWheelCenterY, rpsWheelRadius, 18, 90, colors[2]);
+  drawRpsSegment(rpsWheelCenterX, rpsWheelCenterY, rpsWheelRadius, 90, 162, colors[3]);
+  drawRpsSegment(rpsWheelCenterX, rpsWheelCenterY, rpsWheelRadius, 162, 234, colors[4]);
+
+  for (int i = 0; i < 4; i++) {
+    gfx->drawCircle(rpsWheelCenterX, rpsWheelCenterY, rpsWheelRadius - i, RGB565_WHITE);
+  }
+
+  const int boundaryCount = 5;
+  float boundaries[boundaryCount] = {-126, -54, 18, 90, 162};
+  const float degToRad = 0.01745329252f;
+
+  for (int i = 0; i < boundaryCount; i++) {
+    float rad = boundaries[i] * degToRad;
+    int x = rpsWheelCenterX + (int)(cos(rad) * rpsWheelRadius);
+    int y = rpsWheelCenterY + (int)(sin(rad) * rpsWheelRadius);
+
+    for (int offset = -1; offset <= 1; offset++) {
+      gfx->drawLine(rpsWheelCenterX + offset, rpsWheelCenterY, x + offset, y, RGB565_BLACK);
+    }
+  }
+
+  gfx->fillCircle(rpsWheelCenterX, rpsWheelCenterY, 14, RGB565_BLACK);
+
+  drawRpsWheelLabel("ROCK", 160, 135, 2);
+  drawRpsWheelLabel("PAPER", 243, 214, 2);
+  drawRpsWheelLabel("SCISSORS", 222, 320, 2);
+  drawRpsWheelLabel("LIZARD", 98, 320, 2);
+  drawRpsWheelLabel("SPOCK", 77, 214, 2);
+}
+
+int rpsChoiceFromTouch(int x, int y) {
+  long dx = x - rpsWheelCenterX;
+  long dy = y - rpsWheelCenterY;
+  long distanceSquared = dx * dx + dy * dy;
+  long radiusSquared = (long)rpsWheelRadius * rpsWheelRadius;
+
+  if (distanceSquared > radiusSquared) return -1;
+
+  float angle = atan2((float)dy, (float)dx) * 57.2957795f;
+
+  if (angle < -126.0f) {
+    angle += 360.0f;
+  }
+
+  if (angle >= -126.0f && angle < -54.0f) return 0;
+  if (angle >= -54.0f && angle < 18.0f) return 1;
+  if (angle >= 18.0f && angle < 90.0f) return 2;
+  if (angle >= 90.0f && angle < 162.0f) return 3;
+  return 4;
 }
 
 void drawIpFields() {
@@ -908,6 +1061,28 @@ char checkWinner() {
   return ' ';
 }
 
+bool rpsChoiceBeats(int firstChoice, int secondChoice) {
+  if (firstChoice == 0) return secondChoice == 2 || secondChoice == 3;
+  if (firstChoice == 1) return secondChoice == 0 || secondChoice == 4;
+  if (firstChoice == 2) return secondChoice == 1 || secondChoice == 3;
+  if (firstChoice == 3) return secondChoice == 1 || secondChoice == 4;
+  if (firstChoice == 4) return secondChoice == 0 || secondChoice == 2;
+
+  return false;
+}
+
+int calculateRpsWinner(int p1Choice, int p2Choice) {
+  if (p1Choice == p2Choice) return 0;
+  if (rpsChoiceBeats(p1Choice, p2Choice)) return 1;
+  return 2;
+}
+
+void resetRpsRound() {
+  rpsP1Choice = -1;
+  rpsP2Choice = -1;
+  rpsWinner = 0;
+}
+
 // ============================================================================
 // GAME DRAWING
 // ============================================================================
@@ -1030,6 +1205,92 @@ void drawGamesScreen() {
 
   drawButton(btnGamesX, btnGamesHomeY, btnGamesW, btnGamesHomeH,
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "HOME", 2);
+}
+
+void drawRpsMenuScreen() {
+  appState = STATE_ROCK_PAPER_SCISSORS;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("ROCK PAPER", 28, 2, RGB565_WHITE);
+  drawCenteredText("SCISSORS LIZARD SPOCK", 58, 2, RGB565_CYAN);
+
+  char scoreLine[48];
+  snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d   E:%d", rpsScoreP1, rpsScoreP2, rpsScoreDraw);
+  drawCenteredText(scoreLine, 125, 2, RGB565_YELLOW);
+
+  drawButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "LOCAL", 2);
+
+  drawButton(btnHostX, btnHostY, btnHostW, btnHostH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "HOST", 2);
+
+  drawButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "JOIN", 2);
+
+  drawButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH,
+             RGB565_RED, RGB565_WHITE, RGB565_WHITE, "RESET SCOR", 2);
+
+  drawButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "HOME", 2);
+}
+
+void drawRpsChoiceScreen(int playerNumber) {
+  appState = (playerNumber == 1) ? STATE_RPS_CHOICE_P1 : STATE_RPS_CHOICE_P2;
+  gfx->fillScreen(RGB565_BLACK);
+
+  if (playerNumber == 1) {
+    drawCenteredText("PLAYER 1 CHOICE", 18, 2, RGB565_CYAN);
+  } else {
+    drawCenteredText("PLAYER 2 CHOICE", 18, 2, RGB565_CYAN);
+  }
+
+  drawCenteredText("Pick one segment", 48, 1, RGB565_YELLOW);
+  drawRpsWheel();
+
+  drawButton(btnRpsMenuX, btnRpsMenuY, btnRpsMenuW, btnRpsMenuH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
+}
+
+void drawRpsResultScreen() {
+  appState = STATE_RPS_RESULT;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("RESULT", 25, 3, RGB565_WHITE);
+
+  char line[48];
+  snprintf(line, sizeof(line), "P1: %s", rpsChoiceLabels[rpsP1Choice]);
+  drawCenteredText(line, 95, 2, RGB565_CYAN);
+
+  snprintf(line, sizeof(line), "P2: %s", rpsChoiceLabels[rpsP2Choice]);
+  drawCenteredText(line, 135, 2, RGB565_YELLOW);
+
+  if (rpsWinner == 0) {
+    drawCenteredText("DRAW!", 205, 3, RGB565_YELLOW);
+  } else if (rpsWinner == 1) {
+    drawCenteredText("PLAYER 1 WINS!", 205, 2, RGB565_GREEN);
+  } else {
+    drawCenteredText("PLAYER 2 WINS!", 205, 2, RGB565_GREEN);
+  }
+
+  snprintf(line, sizeof(line), "P1:%d   P2:%d   E:%d", rpsScoreP1, rpsScoreP2, rpsScoreDraw);
+  drawCenteredText(line, 270, 2, RGB565_WHITE);
+
+  drawButton(btnPlayAgainX, btnPlayAgainY, btnPlayAgainW, btnPlayAgainH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "PLAY AGAIN", 2);
+
+  drawButton(btnResultMenuX, btnResultMenuY, btnResultMenuW, btnResultMenuH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
+}
+
+void drawRpsPlaceholderScreen(const char *title) {
+  rpsPlaceholderTitle = title;
+  appState = STATE_RPS_PLACEHOLDER;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText(rpsPlaceholderTitle, 110, 3, RGB565_CYAN);
+
+  drawButton(btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
 }
 
 void drawEmptyGameScreen(const char *title, int state) {
@@ -1453,6 +1714,32 @@ void checkJoinConnection() {
 // ============================================================================
 // GAME ACTIONS
 // ============================================================================
+void startRpsLocalGame() {
+  beepStart();
+  resetRpsRound();
+  drawRpsChoiceScreen(1);
+}
+
+void finishRpsLocalGame() {
+  rpsWinner = calculateRpsWinner(rpsP1Choice, rpsP2Choice);
+
+  if (rpsWinner == 0) {
+    rpsScoreDraw++;
+    beepDraw();
+  } else {
+    if (rpsWinner == 1) {
+      rpsScoreP1++;
+    } else {
+      rpsScoreP2++;
+    }
+
+    beepWin();
+  }
+
+  saveRpsScore();
+  drawRpsResultScreen();
+}
+
 void finishGame(char result) {
   gameOver = true;
   winner = result;
@@ -1663,7 +1950,7 @@ void handleGamesTouch(int x, int y) {
 
   if (inRect(x, y, btnGamesX, btnGamesRpsY, btnGamesW, btnGamesH)) {
     beepClick();
-    drawEmptyGameScreen("ROCK-PAPER-SCISSORS", STATE_ROCK_PAPER_SCISSORS);
+    drawRpsMenuScreen();
     return;
   }
 
@@ -1684,6 +1971,81 @@ void handleEmptyGameTouch(int x, int y) {
   if (inRect(x, y, btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH)) {
     beepClick();
     drawGamesScreen();
+    return;
+  }
+}
+
+void handleRpsMenuTouch(int x, int y) {
+  if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
+    startRpsLocalGame();
+    return;
+  }
+
+  if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
+    beepClick();
+    drawRpsPlaceholderScreen("RPS HOST");
+    return;
+  }
+
+  if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
+    beepClick();
+    drawRpsPlaceholderScreen("RPS JOIN");
+    return;
+  }
+
+  if (inRect(x, y, btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH)) {
+    beepClick();
+    resetRpsScore();
+    drawRpsMenuScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH)) {
+    beepClick();
+    returnToHome(false);
+    return;
+  }
+}
+
+void handleRpsChoiceTouch(int x, int y) {
+  if (inRect(x, y, btnRpsMenuX, btnRpsMenuY, btnRpsMenuW, btnRpsMenuH)) {
+    beepClick();
+    drawRpsMenuScreen();
+    return;
+  }
+
+  int choice = rpsChoiceFromTouch(x, y);
+  if (choice < 0) return;
+
+  beepMove();
+
+  if (appState == STATE_RPS_CHOICE_P1) {
+    rpsP1Choice = choice;
+    drawRpsChoiceScreen(2);
+    return;
+  }
+
+  rpsP2Choice = choice;
+  finishRpsLocalGame();
+}
+
+void handleRpsResultTouch(int x, int y) {
+  if (inRect(x, y, btnPlayAgainX, btnPlayAgainY, btnPlayAgainW, btnPlayAgainH)) {
+    startRpsLocalGame();
+    return;
+  }
+
+  if (inRect(x, y, btnResultMenuX, btnResultMenuY, btnResultMenuW, btnResultMenuH)) {
+    beepClick();
+    drawRpsMenuScreen();
+    return;
+  }
+}
+
+void handleRpsPlaceholderTouch(int x, int y) {
+  if (inRect(x, y, btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH)) {
+    beepClick();
+    drawRpsMenuScreen();
     return;
   }
 }
@@ -2005,7 +2367,15 @@ void handleTouch(int x, int y) {
     handleHomeTouch(x, y);
   } else if (appState == STATE_GAMES) {
     handleGamesTouch(x, y);
-  } else if (appState == STATE_ROCK_PAPER_SCISSORS || appState == STATE_BATTLESHIP) {
+  } else if (appState == STATE_ROCK_PAPER_SCISSORS) {
+    handleRpsMenuTouch(x, y);
+  } else if (appState == STATE_RPS_CHOICE_P1 || appState == STATE_RPS_CHOICE_P2) {
+    handleRpsChoiceTouch(x, y);
+  } else if (appState == STATE_RPS_RESULT) {
+    handleRpsResultTouch(x, y);
+  } else if (appState == STATE_RPS_PLACEHOLDER) {
+    handleRpsPlaceholderTouch(x, y);
+  } else if (appState == STATE_BATTLESHIP) {
     handleEmptyGameTouch(x, y);
   } else if (appState == STATE_MENU) {
     handleMenuTouch(x, y);
@@ -2087,6 +2457,7 @@ void setup() {
   }
 
   loadScore();
+  loadRpsScore();
   loadNetworkSettings();
   clearBoard();
   WiFi.mode(WIFI_OFF);
