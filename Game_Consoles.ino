@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 3.7 - 2026-05-20 22:52 - Added SD-loaded RPSLS draw screens based on
+// the shared choice selected by both players.
 // Version 3.6 - 2026-05-20 22:27 - Added SD-loaded RPSLS winning screens based
 // on the exact winning choice combination for Player 1 and Player 2.
 // Version 3.5 - 2026-05-20 21:36 - Added Home screen version/build metadata
@@ -92,8 +94,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 3.6";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V36-2026052022";
+const char *APP_VERSION_TEXT = "Version 3.7";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V37-2026052022";
 
 
 
@@ -316,6 +318,7 @@ const int rpsWheelRadius = 145;
 const char *rpsWheelImagePath = "/RPSLS_game/general/rpsls_wheel.raw";
 const char *rpsPlayer1WinsPath = "/RPSLS_game/local/player1_wins";
 const char *rpsPlayer2WinsPath = "/RPSLS_game/local/player2_wins";
+const char *rpsDrawPath = "/RPSLS_game/local/draw";
 const int btnRpsMenuX = 90;
 const int btnRpsMenuY = 420;
 const int btnRpsMenuW = 140;
@@ -1141,26 +1144,46 @@ const char *getRpsWinImageBaseName(int winningChoice, int losingChoice) {
   return nullptr;
 }
 
+const char *getRpsDrawImageBaseName(int choice) {
+  if (choice == 0) return "draw_rock";
+  if (choice == 1) return "draw_paper";
+  if (choice == 2) return "draw_scissors";
+  if (choice == 3) return "draw_lizard";
+  if (choice == 4) return "draw_spock";
+
+  return nullptr;
+}
+
+bool drawRpsRawResultImage(const char *folder, const char *baseName) {
+  if (!sdReady || !baseName) return false;
+
+  char path[96];
+  snprintf(path, sizeof(path), "%s/%s.raw", folder, baseName);
+
+  if (!SD.exists(path)) {
+    Serial.print("Missing RPSLS result image: ");
+    Serial.println(path);
+    return false;
+  }
+
+  return drawRaw565ImageFromSD(path, 0, 0, screenW, screenH);
+}
+
+bool drawRpsDrawImage() {
+  if (rpsWinner != 0) return false;
+
+  return drawRpsRawResultImage(rpsDrawPath, getRpsDrawImageBaseName(rpsP1Choice));
+}
+
 bool drawRpsWinningImage() {
   if (!sdReady || rpsWinner == 0) return false;
 
   int winningChoice = (rpsWinner == 1) ? rpsP1Choice : rpsP2Choice;
   int losingChoice = (rpsWinner == 1) ? rpsP2Choice : rpsP1Choice;
   const char *baseName = getRpsWinImageBaseName(winningChoice, losingChoice);
-
-  if (!baseName) return false;
-
   const char *folder = (rpsWinner == 1) ? rpsPlayer1WinsPath : rpsPlayer2WinsPath;
-  char path[96];
-  snprintf(path, sizeof(path), "%s/%s.raw", folder, baseName);
 
-  if (!SD.exists(path)) {
-    Serial.print("Missing RPSLS win image: ");
-    Serial.println(path);
-    return false;
-  }
-
-  return drawRaw565ImageFromSD(path, 0, 0, screenW, screenH);
+  return drawRpsRawResultImage(folder, baseName);
 }
 
 // ============================================================================
@@ -1334,13 +1357,13 @@ void drawRpsChoiceScreen(int playerNumber) {
 void drawRpsResultScreen() {
   appState = STATE_RPS_RESULT;
 
-  bool winImageDrawn = drawRpsWinningImage();
+  bool resultImageDrawn = (rpsWinner == 0) ? drawRpsDrawImage() : drawRpsWinningImage();
 
-  if (!winImageDrawn) {
+  if (!resultImageDrawn) {
     gfx->fillScreen(RGB565_BLACK);
 
     if (rpsWinner == 0) {
-      drawCenteredText("DRAW!", 165, 3, RGB565_YELLOW);
+      drawCenteredText("Missing draw image", 150, 2, RGB565_RED);
     } else {
       drawCenteredText("Missing win image", 150, 2, RGB565_RED);
     }
