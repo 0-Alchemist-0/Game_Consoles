@@ -1,52 +1,58 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
-// 2026-05-20 21:16 +02:00 - Switched the RPSLS choice screen to use the
+// Version 3.5 - 2026-05-20 21:36 - Added Home screen version/build metadata
+// and defined the Build ID format based on version plus date/hour.
+// Version 3.4 - 2026-05-20 21:29 - Removed timezone offsets from changelog
+// timestamps and standardized future changelog entries to omit them.
+// Version 3.3 - 2026-05-20 21:27 - Added version numbers to all
+// changelog entries, starting at Version 1.0 and incrementing by 0.1 per change.
+// Version 3.2 - 2026-05-20 21:16 - Switched the RPSLS choice screen to use the
 // SD-loaded /RPSLS_game/general/rpsls_wheel.raw image while keeping invisible
 // touch segments for selection.
-// 2026-05-15 23:01 +02:00 - Added the missing RGB888 to RGB565 helper used by
+// Version 3.1 - 2026-05-15 23:01 - Added the missing RGB888 to RGB565 helper used by
 // the Rock-Paper-Scissors wheel colors.
-// 2026-05-15 22:56 +02:00 - Replaced the Rock-Paper-Scissors placeholder with
+// Version 3.0 - 2026-05-15 22:56 - Replaced the Rock-Paper-Scissors placeholder with
 // a local Rock-Paper-Scissors-Lizard-Spock flow, menu, scores, and result page.
-// 2026-05-15 21:52 +02:00 - Added a Games hub page with Tic Tac Toe,
+// Version 2.9 - 2026-05-15 21:52 - Added a Games hub page with Tic Tac Toe,
 // Rock-Paper-Scissors, Battleship, and Home navigation.
-// 2026-05-14 23:38 +02:00 - Expanded Join WiFi selection to show eight SSIDs
+// Version 2.8 - 2026-05-14 23:38 - Expanded Join WiFi selection to show eight SSIDs
 // per page and added MORE pagination for additional scanned networks.
-// 2026-05-14 23:31 +02:00 - Added "Connect and Die" and "The LAN of the Free"
+// Version 2.7 - 2026-05-14 23:31 - Added "Connect and Die" and "The LAN of the Free"
 // to the selectable Host SSID list.
-// 2026-05-14 23:27 +02:00 - Expanded the Host Select SSID page to show eight
+// Version 2.6 - 2026-05-14 23:27 - Expanded the Host Select SSID page to show eight
 // SSID options per page.
-// 2026-05-14 23:24 +02:00 - Changed the frame_000.raw intro hold from 4 seconds
+// Version 2.5 - 2026-05-14 23:24 - Changed the frame_000.raw intro hold from 4 seconds
 // to 1 second.
-// 2026-05-14 23:13 +02:00 - Finalized Host Select SSID layout with four visible
+// Version 2.4 - 2026-05-14 23:13 - Finalized Host Select SSID layout with four visible
 // SSIDs per page, compact list text, and larger Host waiting SSID/IP display.
-// 2026-05-14 23:00 +02:00 - Added two-step Host setup: select an epic SSID,
+// Version 2.3 - 2026-05-14 23:00 - Added two-step Host setup: select an epic SSID,
 // confirm Host IP with keypad, then start AP mode with password Alchemist2026.
-// 2026-05-14 22:47 +02:00 - Added two-step Join setup: select scanned WiFi
+// Version 2.2 - 2026-05-14 22:47 - Added two-step Join setup: select scanned WiFi
 // network, confirm Host IP with keypad, then connect with password Alchemist2026.
-// 2026-05-14 22:18 +02:00 - Added an IP settings page with four editable fields,
+// Version 2.1 - 2026-05-14 22:18 - Added an IP settings page with four editable fields,
 // numeric keypad input, persistent storage, and default IP 192.168.10.1.
-// 2026-05-11 22:06 +02:00 - Moved the Tic Tac Toe Home button to the game mode
+// Version 2.0 - 2026-05-11 22:06 - Moved the Tic Tac Toe Home button to the game mode
 // menu page with Local, Host, Join, and Reset Score.
-// 2026-05-11 19:41 +02:00 - Changed the home screen Exit button to reboot the
+// Version 1.9 - 2026-05-11 19:41 - Changed the home screen Exit button to reboot the
 // ESP32 instead of blanking the display.
-// 2026-05-11 19:33 +02:00 - Scaled the home screen RAW buttons to fit the
+// Version 1.8 - 2026-05-11 19:33 - Scaled the home screen RAW buttons to fit the
 // button slots defined in background.raw.
-// 2026-05-11 18:52 +02:00 - Added an SD-loaded home screen after the intro with
+// Version 1.7 - 2026-05-11 18:52 - Added an SD-loaded home screen after the intro with
 // background and Games, Settings, and Exit RAW buttons.
-// 2026-05-11 18:40 +02:00 - Added a 4 second hold on frame_000.raw before the
+// Version 1.6 - 2026-05-11 18:40 - Added a 4 second hold on frame_000.raw before the
 // rest of the RAW intro animation plays.
-// 2026-05-11 18:05 +02:00 - Finalized RAW565 portrait intro playback at normal
+// Version 1.5 - 2026-05-11 18:05 - Finalized RAW565 portrait intro playback at normal
 // rotation, starting from frame_000.raw.
-// 2026-05-11 15:35 +02:00 - Enabled inverted display colors through a dedicated
+// Version 1.4 - 2026-05-11 15:35 - Enabled inverted display colors through a dedicated
 // display setting.
-// 2026-05-11 15:27 +02:00 - Added microSD support for boot intro and SD-loaded
+// Version 1.3 - 2026-05-11 15:27 - Added microSD support for boot intro and SD-loaded
 // UI assets while keeping local and WiFi gameplay modes.
-// 2026-05-11 14:58 +02:00 - Removed the duplicate sketch compile conflict by
+// Version 1.2 - 2026-05-11 14:58 - Removed the duplicate sketch compile conflict by
 // keeping Game_Consoles.ino as the active Arduino sketch file.
-// 2026-05-11 14:49 +02:00 - Rebuilt the sketch with a clean structure while
+// Version 1.1 - 2026-05-11 14:49 - Rebuilt the sketch with a clean structure while
 // keeping local play, WiFi host/join play, persistent score, touch input, and UI.
-// 2026-05-11 14:18 +02:00 - Added local play mode with a main menu option,
+// Version 1.0 - 2026-05-11 14:18 - Added local play mode with a main menu option,
 // allowing X and O to play on the same device without WiFi.
 
 #include <Arduino_GFX_Library.h>
@@ -81,6 +87,11 @@ static const int PIN_SCL      = 12;
 static const int PIN_BUZZER   = 4;
 
 static const uint8_t FT6336_ADDR = 0x38;
+
+// Keep these in sync with the newest CHANGELOG entry.
+// Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
+const char *APP_VERSION_TEXT = "Version 3.5";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V35-2026052021";
 
 
 
@@ -765,6 +776,24 @@ void drawCenteredText(const char *txt, int y, int size, uint16_t color) {
   gfx->print(txt);
 }
 
+void drawCenteredTextWithShadow(const char *txt, int y, int size, uint16_t color, uint16_t shadowColor) {
+  int16_t x1, y1;
+  uint16_t w, h;
+
+  gfx->setTextSize(size);
+  gfx->getTextBounds((char *)txt, 0, y, &x1, &y1, &w, &h);
+
+  int x = (screenW - w) / 2;
+
+  gfx->setCursor(x + 1, y + 1);
+  gfx->setTextColor(shadowColor);
+  gfx->print(txt);
+
+  gfx->setCursor(x, y);
+  gfx->setTextColor(color);
+  gfx->print(txt);
+}
+
 void drawButton(int x, int y, int w, int h, uint16_t fillColor, uint16_t borderColor, uint16_t textColor, const char *label, int textSize) {
   gfx->fillRoundRect(x, y, w, h, 10, fillColor);
   gfx->drawRoundRect(x, y, w, h, 10, borderColor);
@@ -1390,6 +1419,11 @@ void drawResultScreen() {
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "INAPOI LA MENIU", 2);
 }
 
+void drawHomeBuildInfo() {
+  drawCenteredTextWithShadow(APP_VERSION_TEXT, 444, 1, RGB565_WHITE, RGB565_BLACK);
+  drawCenteredTextWithShadow(APP_BUILD_ID_TEXT, 459, 1, RGB565_WHITE, RGB565_BLACK);
+}
+
 void drawHomeScreen() {
   appState = STATE_HOME;
   gfx->setRotation(0);
@@ -1439,6 +1473,8 @@ void drawHomeScreen() {
     drawButton(homeExitRawX, homeExitRawY, homeButtonSlotW, homeButtonSlotH,
                RGB565_RED, RGB565_WHITE, RGB565_WHITE, "EXIT", 2);
   }
+
+  drawHomeBuildInfo();
 }
 
 void drawSettingsScreen() {
