@@ -1,0 +1,67 @@
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0" version="29.3.6">
+  <diagram id="kJatclaPOhDzYtTqUAg8" name="Page-1">
+    <mxGraphModel dx="1376" dy="871" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="esp32" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1" value="Arduino nano ESP32" vertex="1">
+          <mxGeometry height="240" width="160" x="320" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="oled" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="OLED Display&lt;br&gt;(SSD1306 I2C)" vertex="1">
+          <mxGeometry height="80" width="120" x="340" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="btn_up" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f5f5f5;fontColor=#333333;strokeColor=#666666;" value="UP" vertex="1">
+          <mxGeometry height="40" width="40" x="120" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="btn_down" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f5f5f5;fontColor=#333333;strokeColor=#666666;" value="DOWN" vertex="1">
+          <mxGeometry height="40" width="40" x="120" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="btn_left" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f5f5f5;fontColor=#333333;strokeColor=#666666;" value="LEFT" vertex="1">
+          <mxGeometry height="40" width="40" x="80" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="btn_right" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f5f5f5;fontColor=#333333;strokeColor=#666666;" value="RIGHT" vertex="1">
+          <mxGeometry height="40" width="40" x="160" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="btn_a" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" value="A" vertex="1">
+          <mxGeometry height="50" width="50" x="560" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="btn_b" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" value="B" vertex="1">
+          <mxGeometry height="50" width="50" x="630" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="buzzer" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;" value="Buzzer" vertex="1">
+          <mxGeometry height="60" width="60" x="580" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="con_sda" edge="1" parent="1" source="oled" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;strokeColor=#FF0000;" target="esp32" value="SDA (GPIO 21)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="con_scl" edge="1" parent="1" source="oled" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;strokeColor=#0000FF;" target="esp32" value="SCL (GPIO 22)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="con_up" edge="1" parent="1" source="btn_up" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.1;entryDx=0;entryDy=0;" target="esp32" value="GPIO 13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="con_down" edge="1" parent="1" source="btn_down" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0;" target="esp32" value="GPIO 12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="con_left" edge="1" parent="1" source="btn_left" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.2;entryDx=0;entryDy=0;" target="esp32" value="GPIO 14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="con_right" edge="1" parent="1" source="btn_right" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" target="esp32" value="GPIO 27">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="con_a" edge="1" parent="1" source="btn_a" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.3;" target="esp32" value="GPIO 32">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="con_b" edge="1" parent="1" source="btn_b" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.1;" target="esp32" value="GPIO 33">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="con_buzzer" edge="1" parent="1" source="buzzer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPx=0;exitPy=0;entryX=1;entryY=0.05;" target="esp32" value="GPIO 25">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="power" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontStyle=2" value="Power: USB 5V or LiPo 3.7V" vertex="1">
+          <mxGeometry height="30" width="160" x="320" y="500" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
