@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 3.6 - 2026-05-20 22:27 - Added SD-loaded RPSLS winning screens based
+// on the exact winning choice combination for Player 1 and Player 2.
 // Version 3.5 - 2026-05-20 21:36 - Added Home screen version/build metadata
 // and defined the Build ID format based on version plus date/hour.
 // Version 3.4 - 2026-05-20 21:29 - Removed timezone offsets from changelog
@@ -90,8 +92,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 3.5";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V35-2026052021";
+const char *APP_VERSION_TEXT = "Version 3.6";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V36-2026052022";
 
 
 
@@ -312,6 +314,8 @@ const int rpsWheelCenterX = 160;
 const int rpsWheelCenterY = 250;
 const int rpsWheelRadius = 145;
 const char *rpsWheelImagePath = "/RPSLS_game/general/rpsls_wheel.raw";
+const char *rpsPlayer1WinsPath = "/RPSLS_game/local/player1_wins";
+const char *rpsPlayer2WinsPath = "/RPSLS_game/local/player2_wins";
 const int btnRpsMenuX = 90;
 const int btnRpsMenuY = 420;
 const int btnRpsMenuW = 140;
@@ -1122,6 +1126,43 @@ void resetRpsRound() {
   rpsWinner = 0;
 }
 
+const char *getRpsWinImageBaseName(int winningChoice, int losingChoice) {
+  if (winningChoice == 0 && losingChoice == 2) return "win_rock_crushes_scissors";
+  if (winningChoice == 0 && losingChoice == 3) return "win_rock_crushes_lizard";
+  if (winningChoice == 1 && losingChoice == 0) return "win_paper_covers_rock";
+  if (winningChoice == 1 && losingChoice == 4) return "win_paper_releases_spock";
+  if (winningChoice == 2 && losingChoice == 1) return "win_scissors_cuts_paper";
+  if (winningChoice == 2 && losingChoice == 3) return "win_scissors_cuts_lizard";
+  if (winningChoice == 3 && losingChoice == 1) return "win_lizard_eats_paper";
+  if (winningChoice == 3 && losingChoice == 4) return "win_lizard_poisons_spock";
+  if (winningChoice == 4 && losingChoice == 0) return "win_spock_vaporizes_rock";
+  if (winningChoice == 4 && losingChoice == 2) return "win_spock_smashes_scissors";
+
+  return nullptr;
+}
+
+bool drawRpsWinningImage() {
+  if (!sdReady || rpsWinner == 0) return false;
+
+  int winningChoice = (rpsWinner == 1) ? rpsP1Choice : rpsP2Choice;
+  int losingChoice = (rpsWinner == 1) ? rpsP2Choice : rpsP1Choice;
+  const char *baseName = getRpsWinImageBaseName(winningChoice, losingChoice);
+
+  if (!baseName) return false;
+
+  const char *folder = (rpsWinner == 1) ? rpsPlayer1WinsPath : rpsPlayer2WinsPath;
+  char path[96];
+  snprintf(path, sizeof(path), "%s/%s.raw", folder, baseName);
+
+  if (!SD.exists(path)) {
+    Serial.print("Missing RPSLS win image: ");
+    Serial.println(path);
+    return false;
+  }
+
+  return drawRaw565ImageFromSD(path, 0, 0, screenW, screenH);
+}
+
 // ============================================================================
 // GAME DRAWING
 // ============================================================================
@@ -1292,27 +1333,22 @@ void drawRpsChoiceScreen(int playerNumber) {
 
 void drawRpsResultScreen() {
   appState = STATE_RPS_RESULT;
-  gfx->fillScreen(RGB565_BLACK);
 
-  drawCenteredText("RESULT", 25, 3, RGB565_WHITE);
+  bool winImageDrawn = drawRpsWinningImage();
 
-  char line[48];
-  snprintf(line, sizeof(line), "P1: %s", rpsChoiceLabels[rpsP1Choice]);
-  drawCenteredText(line, 95, 2, RGB565_CYAN);
+  if (!winImageDrawn) {
+    gfx->fillScreen(RGB565_BLACK);
 
-  snprintf(line, sizeof(line), "P2: %s", rpsChoiceLabels[rpsP2Choice]);
-  drawCenteredText(line, 135, 2, RGB565_YELLOW);
+    if (rpsWinner == 0) {
+      drawCenteredText("DRAW!", 165, 3, RGB565_YELLOW);
+    } else {
+      drawCenteredText("Missing win image", 150, 2, RGB565_RED);
+    }
 
-  if (rpsWinner == 0) {
-    drawCenteredText("DRAW!", 205, 3, RGB565_YELLOW);
-  } else if (rpsWinner == 1) {
-    drawCenteredText("PLAYER 1 WINS!", 205, 2, RGB565_GREEN);
-  } else {
-    drawCenteredText("PLAYER 2 WINS!", 205, 2, RGB565_GREEN);
+    char scoreLine[48];
+    snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d   E:%d", rpsScoreP1, rpsScoreP2, rpsScoreDraw);
+    drawCenteredText(scoreLine, 230, 2, RGB565_WHITE);
   }
-
-  snprintf(line, sizeof(line), "P1:%d   P2:%d   E:%d", rpsScoreP1, rpsScoreP2, rpsScoreDraw);
-  drawCenteredText(line, 270, 2, RGB565_WHITE);
 
   drawButton(btnPlayAgainX, btnPlayAgainY, btnPlayAgainW, btnPlayAgainH,
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "PLAY AGAIN", 2);
