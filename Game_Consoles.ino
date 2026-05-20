@@ -1,6 +1,9 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// 2026-05-20 21:16 +02:00 - Switched the RPSLS choice screen to use the
+// SD-loaded /RPSLS_game/general/rpsls_wheel.raw image while keeping invisible
+// touch segments for selection.
 // 2026-05-15 23:01 +02:00 - Added the missing RGB888 to RGB565 helper used by
 // the Rock-Paper-Scissors wheel colors.
 // 2026-05-15 22:56 +02:00 - Replaced the Rock-Paper-Scissors placeholder with
@@ -296,7 +299,8 @@ const int btnEmptyBackH = 40;
 
 const int rpsWheelCenterX = 160;
 const int rpsWheelCenterY = 250;
-const int rpsWheelRadius = 135;
+const int rpsWheelRadius = 145;
+const char *rpsWheelImagePath = "/RPSLS_game/general/rpsls_wheel.raw";
 const int btnRpsMenuX = 90;
 const int btnRpsMenuY = 420;
 const int btnRpsMenuW = 140;
@@ -823,6 +827,12 @@ void drawRpsWheelLabel(const char *label, int x, int y, int size) {
 }
 
 void drawRpsWheel() {
+  if (sdReady && SD.exists(rpsWheelImagePath)) {
+    if (drawRaw565ImageFromSD(rpsWheelImagePath, 0, 0, screenW, screenH)) {
+      return;
+    }
+  }
+
   uint16_t colors[5] = {
     rgb888to565(150, 170, 190),
     rgb888to565(210, 232, 246),
@@ -1237,6 +1247,7 @@ void drawRpsMenuScreen() {
 void drawRpsChoiceScreen(int playerNumber) {
   appState = (playerNumber == 1) ? STATE_RPS_CHOICE_P1 : STATE_RPS_CHOICE_P2;
   gfx->fillScreen(RGB565_BLACK);
+  drawRpsWheel();
 
   if (playerNumber == 1) {
     drawCenteredText("PLAYER 1 CHOICE", 18, 2, RGB565_CYAN);
@@ -1245,7 +1256,6 @@ void drawRpsChoiceScreen(int playerNumber) {
   }
 
   drawCenteredText("Pick one segment", 48, 1, RGB565_YELLOW);
-  drawRpsWheel();
 
   drawButton(btnRpsMenuX, btnRpsMenuY, btnRpsMenuW, btnRpsMenuH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
