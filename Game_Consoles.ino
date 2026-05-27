@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 3.9 - 2026-05-27 15:03 - Added network Host/Join gameplay for RPSLS
+// using the same WiFi setup flow and hidden-choice result logic as local play.
 // Version 3.8 - 2026-05-27 14:48 - Changed game mode menu Home buttons to Back
 // buttons that return to the Games selection screen.
 // Version 3.7 - 2026-05-20 22:52 - Added SD-loaded RPSLS draw screens based on
@@ -96,8 +98,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 3.8";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V38-2026052714";
+const char *APP_VERSION_TEXT = "Version 3.9";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V39-2026052715";
 
 
 
@@ -178,6 +180,7 @@ enum AppState {
   STATE_ROCK_PAPER_SCISSORS,
   STATE_RPS_CHOICE_P1,
   STATE_RPS_CHOICE_P2,
+  STATE_RPS_WAITING_CHOICE,
   STATE_RPS_RESULT,
   STATE_RPS_PLACEHOLDER,
   STATE_BATTLESHIP,
@@ -195,6 +198,13 @@ enum AppState {
 };
 
 AppState appState = STATE_HOME;
+
+enum NetworkGameType {
+  NETWORK_GAME_TTT,
+  NETWORK_GAME_RPS
+};
+
+NetworkGameType activeNetworkGame = NETWORK_GAME_TTT;
 
 char board[3][3];
 char currentPlayer = 'X';
@@ -1268,6 +1278,7 @@ void drawScoreBar() {
 // SCREENS
 // ============================================================================
 void drawMenuScreen() {
+  activeNetworkGame = NETWORK_GAME_TTT;
   gfx->fillScreen(RGB565_BLACK);
 
   drawCenteredText("TIC TAC TOE", 35, 3, RGB565_WHITE);
@@ -1313,6 +1324,8 @@ void drawGamesScreen() {
 }
 
 void drawRpsMenuScreen() {
+  activeNetworkGame = NETWORK_GAME_RPS;
+  localGame = false;
   appState = STATE_ROCK_PAPER_SCISSORS;
   gfx->fillScreen(RGB565_BLACK);
 
@@ -1327,10 +1340,10 @@ void drawRpsMenuScreen() {
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "LOCAL", 2);
 
   drawButton(btnHostX, btnHostY, btnHostW, btnHostH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "HOST", 2);
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "HOST - P1", 2);
 
   drawButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "JOIN", 2);
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "JOIN - P2", 2);
 
   drawButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH,
              RGB565_RED, RGB565_WHITE, RGB565_WHITE, "RESET SCOR", 2);
@@ -1351,6 +1364,23 @@ void drawRpsChoiceScreen(int playerNumber) {
   }
 
   drawCenteredText("Pick one segment", 48, 1, RGB565_YELLOW);
+
+  drawButton(btnRpsMenuX, btnRpsMenuY, btnRpsMenuW, btnRpsMenuH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
+}
+
+void drawRpsWaitingChoiceScreen() {
+  appState = STATE_RPS_WAITING_CHOICE;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("CHOICE SAVED", 92, 2, RGB565_GREEN);
+  drawCenteredText("Waiting opponent", 142, 2, RGB565_YELLOW);
+
+  if (myPlayer == '1') {
+    drawCenteredText("You are Player 1", 198, 2, RGB565_CYAN);
+  } else {
+    drawCenteredText("You are Player 2", 198, 2, RGB565_CYAN);
+  }
 
   drawButton(btnRpsMenuX, btnRpsMenuY, btnRpsMenuW, btnRpsMenuH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
@@ -1404,10 +1434,12 @@ void drawEmptyGameScreen(const char *title, int state) {
 }
 
 void drawWaitingHostScreen() {
+  bool rpsNetworkGame = (activeNetworkGame == NETWORK_GAME_RPS);
+
   gfx->fillScreen(RGB565_BLACK);
 
-  drawCenteredText("HOST ACTIV", 28, 3, RGB565_GREEN);
-  drawCenteredText("Tu esti X", 72, 2, RGB565_WHITE);
+  drawCenteredText(rpsNetworkGame ? "RPS HOST" : "HOST ACTIV", 28, 3, RGB565_GREEN);
+  drawCenteredText(rpsNetworkGame ? "Tu esti P1" : "Tu esti X", 72, 2, RGB565_WHITE);
 
   drawCenteredText("Asteapta oponentul", 118, 2, RGB565_YELLOW);
   drawCenteredText("sa intre cu JOIN", 145, 2, RGB565_YELLOW);
@@ -1426,10 +1458,12 @@ void drawWaitingHostScreen() {
 }
 
 void drawConnectingJoinScreen() {
+  bool rpsNetworkGame = (activeNetworkGame == NETWORK_GAME_RPS);
+
   gfx->fillScreen(RGB565_BLACK);
 
-  drawCenteredText("JOIN", 70, 3, RGB565_BLUE);
-  drawCenteredText("Tu esti O", 120, 2, RGB565_WHITE);
+  drawCenteredText(rpsNetworkGame ? "RPS JOIN" : "JOIN", 70, 3, RGB565_BLUE);
+  drawCenteredText(rpsNetworkGame ? "Tu esti P2" : "Tu esti O", 120, 2, RGB565_WHITE);
 
   drawCenteredText("Connecting...", 190, 2, RGB565_YELLOW);
 
@@ -1626,9 +1660,30 @@ void drawHostIpScreen() {
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "HOST", 2);
 }
 
+void startRpsNetworkGame();
+
 // ============================================================================
 // NETWORK
 // ============================================================================
+const char *getNetworkGameCode() {
+  return (activeNetworkGame == NETWORK_GAME_RPS) ? "RPS" : "TTT";
+}
+
+void applyNetworkGameCode(const String &code) {
+  if (code == "RPS") {
+    activeNetworkGame = NETWORK_GAME_RPS;
+  } else if (code == "TTT") {
+    activeNetworkGame = NETWORK_GAME_TTT;
+  }
+}
+
+String buildNetworkMessage(const char *prefix) {
+  String msg = prefix;
+  msg += ":";
+  msg += getNetworkGameCode();
+  return msg;
+}
+
 void sendNetMessage(const String &msg) {
   if (networkConnected && netClient && netClient.connected()) {
     netClient.println(msg);
@@ -1708,7 +1763,7 @@ void beginSelectedJoinConnection() {
 
   localGame = false;
   isHost = false;
-  myPlayer = 'O';
+  myPlayer = (activeNetworkGame == NETWORK_GAME_RPS) ? '2' : 'O';
   myTurn = false;
   networkConnected = false;
 
@@ -1725,8 +1780,8 @@ void beginHostNetwork() {
 
   localGame = false;
   isHost = true;
-  myPlayer = 'X';
-  myTurn = true;
+  myPlayer = (activeNetworkGame == NETWORK_GAME_RPS) ? '1' : 'X';
+  myTurn = (activeNetworkGame == NETWORK_GAME_TTT);
 
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(HOST_IP, HOST_IP, IPAddress(255, 255, 255, 0));
@@ -1739,6 +1794,7 @@ void beginHostNetwork() {
 }
 
 void startLocalGame() {
+  activeNetworkGame = NETWORK_GAME_TTT;
   stopNetwork();
 
   localGame = true;
@@ -1783,6 +1839,12 @@ void startJoinMode() {
 
 void startNetworkGame() {
   localGame = false;
+
+  if (activeNetworkGame == NETWORK_GAME_RPS) {
+    startRpsNetworkGame();
+    return;
+  }
+
   resetGameLogic();
 
   appState = STATE_PLAYING;
@@ -1800,7 +1862,7 @@ void checkHostClient() {
     netClient.setTimeout(10);
     networkConnected = true;
 
-    sendNetMessage("START");
+    sendNetMessage(buildNetworkMessage("START"));
     startNetworkGame();
   }
 }
@@ -1822,12 +1884,19 @@ void checkJoinConnection() {
 // GAME ACTIONS
 // ============================================================================
 void startRpsLocalGame() {
+  activeNetworkGame = NETWORK_GAME_RPS;
+  stopNetwork();
+  localGame = true;
   beepStart();
   resetRpsRound();
   drawRpsChoiceScreen(1);
 }
 
-void finishRpsLocalGame() {
+void completeRpsRoundAndShowResult() {
+  if (appState == STATE_RPS_RESULT) return;
+  if (rpsP1Choice < 0 || rpsP1Choice > 4) return;
+  if (rpsP2Choice < 0 || rpsP2Choice > 4) return;
+
   rpsWinner = calculateRpsWinner(rpsP1Choice, rpsP2Choice);
 
   if (rpsWinner == 0) {
@@ -1845,6 +1914,72 @@ void finishRpsLocalGame() {
 
   saveRpsScore();
   drawRpsResultScreen();
+}
+
+void finishRpsLocalGame() {
+  completeRpsRoundAndShowResult();
+}
+
+void startRpsNetworkGame() {
+  activeNetworkGame = NETWORK_GAME_RPS;
+  localGame = false;
+  resetRpsRound();
+  beepStart();
+
+  if (myPlayer == '2') {
+    drawRpsChoiceScreen(2);
+  } else {
+    drawRpsChoiceScreen(1);
+  }
+}
+
+bool hasLocalRpsNetworkChoice() {
+  if (myPlayer == '1') return rpsP1Choice >= 0;
+  if (myPlayer == '2') return rpsP2Choice >= 0;
+  return false;
+}
+
+void finishRpsNetworkGameIfReady() {
+  if (appState == STATE_RPS_RESULT) return;
+
+  if (rpsP1Choice >= 0 && rpsP2Choice >= 0) {
+    completeRpsRoundAndShowResult();
+    return;
+  }
+
+  if (hasLocalRpsNetworkChoice()) {
+    drawRpsWaitingChoiceScreen();
+  }
+}
+
+void applyRemoteRpsChoice(int choice) {
+  if (choice < 0 || choice > 4) return;
+
+  activeNetworkGame = NETWORK_GAME_RPS;
+
+  if (myPlayer == '1') {
+    rpsP2Choice = choice;
+  } else {
+    rpsP1Choice = choice;
+  }
+
+  finishRpsNetworkGameIfReady();
+}
+
+void applyLocalRpsNetworkChoice(int choice) {
+  if (!networkConnected) return;
+  if (choice < 0 || choice > 4) return;
+
+  if (myPlayer == '1') {
+    if (rpsP1Choice >= 0) return;
+    rpsP1Choice = choice;
+  } else {
+    if (rpsP2Choice >= 0) return;
+    rpsP2Choice = choice;
+  }
+
+  sendNetMessage("RPS_CHOICE:" + String(choice));
+  finishRpsNetworkGameIfReady();
 }
 
 void finishGame(char result) {
@@ -1919,8 +2054,12 @@ void returnToMenu(bool notifyPeer) {
   localGame = false;
   stopNetwork();
 
-  appState = STATE_MENU;
-  drawMenuScreen();
+  if (activeNetworkGame == NETWORK_GAME_RPS) {
+    drawRpsMenuScreen();
+  } else {
+    appState = STATE_MENU;
+    drawMenuScreen();
+  }
 }
 
 void returnToHome(bool notifyPeer) {
@@ -1945,7 +2084,19 @@ void handleNetMessage(String msg) {
     return;
   }
 
+  if (msg.startsWith("START:")) {
+    applyNetworkGameCode(msg.substring(6));
+    startNetworkGame();
+    return;
+  }
+
   if (msg == "NEW") {
+    startNetworkGame();
+    return;
+  }
+
+  if (msg.startsWith("NEW:")) {
+    applyNetworkGameCode(msg.substring(4));
     startNetworkGame();
     return;
   }
@@ -1955,7 +2106,16 @@ void handleNetMessage(String msg) {
     return;
   }
 
+  if (msg.startsWith("RPS_CHOICE:")) {
+    activeNetworkGame = NETWORK_GAME_RPS;
+    int choice = msg.substring(11).toInt();
+    applyRemoteRpsChoice(choice);
+    return;
+  }
+
   if (msg.startsWith("MOVE:")) {
+    if (activeNetworkGame != NETWORK_GAME_TTT) return;
+
     int comma = msg.indexOf(',');
 
     if (comma > 5) {
@@ -1973,7 +2133,9 @@ void pollNetwork() {
   if (!netClient || !netClient.connected()) {
     networkConnected = false;
 
-    if (appState == STATE_PLAYING || appState == STATE_RESULT) {
+    if (appState == STATE_PLAYING || appState == STATE_RESULT ||
+        appState == STATE_RPS_CHOICE_P1 || appState == STATE_RPS_CHOICE_P2 ||
+        appState == STATE_RPS_WAITING_CHOICE || appState == STATE_RPS_RESULT) {
       gfx->fillScreen(RGB565_BLACK);
       drawCenteredText("Conexiune pierduta", 180, 2, RGB565_RED);
       delay(1200);
@@ -1994,18 +2156,21 @@ void pollNetwork() {
 // ============================================================================
 void handleMenuTouch(int x, int y) {
   if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
+    activeNetworkGame = NETWORK_GAME_TTT;
     startLocalGame();
     return;
   }
 
   if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
     beepStart();
+    activeNetworkGame = NETWORK_GAME_TTT;
     startHostMode();
     return;
   }
 
   if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
     beepStart();
+    activeNetworkGame = NETWORK_GAME_TTT;
     startJoinMode();
     return;
   }
@@ -2089,14 +2254,16 @@ void handleRpsMenuTouch(int x, int y) {
   }
 
   if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
-    beepClick();
-    drawRpsPlaceholderScreen("RPS HOST");
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_RPS;
+    startHostMode();
     return;
   }
 
   if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
-    beepClick();
-    drawRpsPlaceholderScreen("RPS JOIN");
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_RPS;
+    startJoinMode();
     return;
   }
 
@@ -2117,7 +2284,11 @@ void handleRpsMenuTouch(int x, int y) {
 void handleRpsChoiceTouch(int x, int y) {
   if (inRect(x, y, btnRpsMenuX, btnRpsMenuY, btnRpsMenuW, btnRpsMenuH)) {
     beepClick();
-    drawRpsMenuScreen();
+    if (localGame) {
+      drawRpsMenuScreen();
+    } else {
+      returnToMenu(true);
+    }
     return;
   }
 
@@ -2125,6 +2296,11 @@ void handleRpsChoiceTouch(int x, int y) {
   if (choice < 0) return;
 
   beepMove();
+
+  if (!localGame) {
+    applyLocalRpsNetworkChoice(choice);
+    return;
+  }
 
   if (appState == STATE_RPS_CHOICE_P1) {
     rpsP1Choice = choice;
@@ -2136,15 +2312,33 @@ void handleRpsChoiceTouch(int x, int y) {
   finishRpsLocalGame();
 }
 
+void handleRpsWaitingChoiceTouch(int x, int y) {
+  if (inRect(x, y, btnRpsMenuX, btnRpsMenuY, btnRpsMenuW, btnRpsMenuH)) {
+    beepClick();
+    returnToMenu(true);
+    return;
+  }
+}
+
 void handleRpsResultTouch(int x, int y) {
   if (inRect(x, y, btnPlayAgainX, btnPlayAgainY, btnPlayAgainW, btnPlayAgainH)) {
-    startRpsLocalGame();
+    if (localGame) {
+      startRpsLocalGame();
+    } else {
+      beepStart();
+      sendNetMessage(buildNetworkMessage("NEW"));
+      startNetworkGame();
+    }
     return;
   }
 
   if (inRect(x, y, btnResultMenuX, btnResultMenuY, btnResultMenuW, btnResultMenuH)) {
     beepClick();
-    drawRpsMenuScreen();
+    if (localGame) {
+      drawRpsMenuScreen();
+    } else {
+      returnToMenu(true);
+    }
     return;
   }
 }
@@ -2455,7 +2649,7 @@ void handleResultTouch(int x, int y) {
       startLocalGame();
     } else {
       beepStart();
-      sendNetMessage("NEW");
+      sendNetMessage(buildNetworkMessage("NEW"));
       startNetworkGame();
     }
 
@@ -2478,6 +2672,8 @@ void handleTouch(int x, int y) {
     handleRpsMenuTouch(x, y);
   } else if (appState == STATE_RPS_CHOICE_P1 || appState == STATE_RPS_CHOICE_P2) {
     handleRpsChoiceTouch(x, y);
+  } else if (appState == STATE_RPS_WAITING_CHOICE) {
+    handleRpsWaitingChoiceTouch(x, y);
   } else if (appState == STATE_RPS_RESULT) {
     handleRpsResultTouch(x, y);
   } else if (appState == STATE_RPS_PLACEHOLDER) {
