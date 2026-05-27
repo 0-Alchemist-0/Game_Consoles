@@ -1,6 +1,10 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 4.4 - 2026-05-27 17:28 - Added randomized Pocket Tanks terrain
+// generation for each new local round.
+// Version 4.3 - 2026-05-27 17:24 - Removed Pocket Tanks full-screen redraws
+// from angle and power controls to reduce UI flicker.
 // Version 4.2 - 2026-05-27 17:16 - Smoothed Pocket Tanks projectile animation
 // by redrawing only the projectile area with a fixed frame time.
 // Version 4.1 - 2026-05-27 16:59 - Replaced Battleship with a Pocket Tanks
@@ -77,6 +81,7 @@
 #include <SD.h>
 #include <FS.h>
 #include <math.h>
+#include <esp_system.h>
 
 // ============================================================================
 // HARDWARE CONFIG
@@ -104,8 +109,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 4.2";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V42-2026052717";
+const char *APP_VERSION_TEXT = "Version 4.4";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V44-2026052717";
 
 
 
@@ -1393,10 +1398,22 @@ uint16_t getPocketTanksTerrainColor(int x) {
 }
 
 void generatePocketTanksTerrain() {
+  float phaseA = (float)random(0, 6283) / 1000.0f;
+  float phaseB = (float)random(0, 6283) / 1000.0f;
+  float phaseC = (float)random(0, 6283) / 1000.0f;
+  float freqA = (float)random(24, 47) / 1000.0f;
+  float freqB = (float)random(58, 106) / 1000.0f;
+  float freqC = (float)random(12, 22) / 1000.0f;
+  float ampA = (float)random(16, 32);
+  float ampB = (float)random(7, 18);
+  float ampC = (float)random(8, 20);
+  int baseY = random(278, 306);
+
   for (int x = 0; x < PT_TERRAIN_W; x++) {
-    float waveA = sin((float)x * 0.035f) * 22.0f;
-    float waveB = sin((float)x * 0.082f + 1.4f) * 11.0f;
-    int y = 286 + (int)waveA + (int)waveB;
+    float waveA = sin((float)x * freqA + phaseA) * ampA;
+    float waveB = sin((float)x * freqB + phaseB) * ampB;
+    float waveC = sin((float)x * freqC + phaseC) * ampC;
+    int y = baseY + (int)waveA + (int)waveB + (int)waveC;
 
     if (y < 242) y = 242;
     if (y > ptFieldBottom - 18) y = ptFieldBottom - 18;
@@ -1405,7 +1422,10 @@ void generatePocketTanksTerrain() {
   }
 
   for (int tank = 0; tank < 2; tank++) {
-    int platformY = (tank == 0) ? 292 : 296;
+    int platformY = ptTerrain[ptTankX[tank]] + random(-8, 9);
+
+    if (platformY < 258) platformY = 258;
+    if (platformY > ptFieldBottom - 34) platformY = ptFieldBottom - 34;
 
     for (int dx = -18; dx <= 18; dx++) {
       int x = ptTankX[tank] + dx;
@@ -1454,13 +1474,7 @@ void drawPocketTanksTank(int tankIndex) {
   }
 }
 
-void redrawPocketTanksProjectileArea(int centerX, int centerY) {
-  int patchRadius = ptProjectileRadius + 3;
-  int left = centerX - patchRadius;
-  int right = centerX + patchRadius;
-  int top = centerY - patchRadius;
-  int bottom = centerY + patchRadius;
-
+void redrawPocketTanksBackgroundArea(int left, int top, int right, int bottom) {
   if (right < 0 || left >= screenW || bottom < 0 || top >= ptFieldBottom) return;
 
   if (left < 0) left = 0;
@@ -1489,6 +1503,45 @@ void redrawPocketTanksProjectileArea(int centerX, int centerY) {
       }
     }
   }
+}
+
+void redrawPocketTanksTankArea(int tankIndex, int oldAngle, int newAngle) {
+  int x = ptTankX[tankIndex];
+  int y = getPocketTanksTankY(tankIndex);
+  int dir = (tankIndex == 0) ? 1 : -1;
+  float oldAngleRad = (float)oldAngle * 0.01745329252f;
+  float newAngleRad = (float)newAngle * 0.01745329252f;
+  int oldBarrelX = x + (int)(cos(oldAngleRad) * 25.0f * dir);
+  int oldBarrelY = y - 1 - (int)(sin(oldAngleRad) * 25.0f);
+  int newBarrelX = x + (int)(cos(newAngleRad) * 25.0f * dir);
+  int newBarrelY = y - 1 - (int)(sin(newAngleRad) * 25.0f);
+  int left = x - ptTankW / 2 - 6;
+  int right = x + ptTankW / 2 + 6;
+  int top = y - 32;
+  int bottom = y + ptTankH + 6;
+
+  if (oldBarrelX < left) left = oldBarrelX - 6;
+  if (oldBarrelX > right) right = oldBarrelX + 6;
+  if (oldBarrelY < top) top = oldBarrelY - 6;
+  if (oldBarrelY > bottom) bottom = oldBarrelY + 6;
+
+  if (newBarrelX < left) left = newBarrelX - 6;
+  if (newBarrelX > right) right = newBarrelX + 6;
+  if (newBarrelY < top) top = newBarrelY - 6;
+  if (newBarrelY > bottom) bottom = newBarrelY + 6;
+
+  redrawPocketTanksBackgroundArea(left, top, right, bottom);
+  drawPocketTanksTank(tankIndex);
+}
+
+void redrawPocketTanksProjectileArea(int centerX, int centerY) {
+  int patchRadius = ptProjectileRadius + 3;
+  int left = centerX - patchRadius;
+  int right = centerX + patchRadius;
+  int top = centerY - patchRadius;
+  int bottom = centerY + patchRadius;
+
+  redrawPocketTanksBackgroundArea(left, top, right, bottom);
 
   if (top < 54) {
     drawPocketTanksHeader();
@@ -2405,12 +2458,15 @@ void finishPocketTanksGame(int winnerIndex) {
 }
 
 void adjustPocketTanksAngle(int delta) {
+  int oldAngle = ptAngle[ptCurrentPlayer];
+
   ptAngle[ptCurrentPlayer] += delta;
 
   if (ptAngle[ptCurrentPlayer] < 5) ptAngle[ptCurrentPlayer] = 5;
   if (ptAngle[ptCurrentPlayer] > 85) ptAngle[ptCurrentPlayer] = 85;
 
-  drawPocketTanksGameScreen();
+  redrawPocketTanksTankArea(ptCurrentPlayer, oldAngle, ptAngle[ptCurrentPlayer]);
+  drawPocketTanksControls();
 }
 
 void adjustPocketTanksPower(int delta) {
@@ -2419,7 +2475,7 @@ void adjustPocketTanksPower(int delta) {
   if (ptPower[ptCurrentPlayer] < 20) ptPower[ptCurrentPlayer] = 20;
   if (ptPower[ptCurrentPlayer] > 100) ptPower[ptCurrentPlayer] = 100;
 
-  drawPocketTanksGameScreen();
+  drawPocketTanksControls();
 }
 
 void firePocketTanksShot() {
@@ -3325,6 +3381,7 @@ void handleTouch(int x, int y) {
 void setup() {
   Serial.begin(115200);
   delay(1000);
+  randomSeed(esp_random());
 
   pinMode(PIN_BUZZER, OUTPUT);
 
