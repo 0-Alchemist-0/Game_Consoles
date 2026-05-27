@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 4.2 - 2026-05-27 17:16 - Smoothed Pocket Tanks projectile animation
+// by redrawing only the projectile area with a fixed frame time.
 // Version 4.1 - 2026-05-27 16:59 - Replaced Battleship with a Pocket Tanks
 // menu and added first local artillery gameplay with destructible terrain.
 // Version 4.0 - 2026-05-27 15:32 - Added viewpoint-specific RPSLS network
@@ -102,8 +104,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 4.1";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V41-2026052716";
+const char *APP_VERSION_TEXT = "Version 4.2";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V42-2026052717";
 
 
 
@@ -362,6 +364,8 @@ const int ptFieldBottom = 355;
 const int ptTankW = 22;
 const int ptTankH = 12;
 const int ptExplosionRadius = 24;
+const int ptProjectileRadius = 3;
+const unsigned long ptProjectileFrameMs = 24;
 
 const int btnPtAngleDownX = 8;
 const int btnPtAngleDownY = 370;
@@ -1384,6 +1388,10 @@ int getPocketTanksTankY(int tankIndex) {
   return y;
 }
 
+uint16_t getPocketTanksTerrainColor(int x) {
+  return (x % 3 == 0) ? rgb888to565(80, 164, 74) : rgb888to565(65, 132, 58);
+}
+
 void generatePocketTanksTerrain() {
   for (int x = 0; x < PT_TERRAIN_W; x++) {
     float waveA = sin((float)x * 0.035f) * 22.0f;
@@ -1408,6 +1416,25 @@ void generatePocketTanksTerrain() {
   }
 }
 
+void drawPocketTanksHeader() {
+  gfx->fillRect(0, 0, screenW, 54, RGB565_BLACK);
+
+  char scoreLine[48];
+  snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d", ptScoreP1, ptScoreP2);
+  drawCenteredText(scoreLine, 8, 1, RGB565_WHITE);
+
+  char turnLine[32];
+  snprintf(turnLine, sizeof(turnLine), "PLAYER %d TURN", ptCurrentPlayer + 1);
+  drawCenteredText(turnLine, 26, 2, (ptCurrentPlayer == 0) ? RGB565_RED : RGB565_CYAN);
+}
+
+void drawPocketTanksTerrain() {
+  for (int x = 0; x < PT_TERRAIN_W; x++) {
+    int y = ptTerrain[x];
+    gfx->fillRect(x, y, 1, ptFieldBottom - y, getPocketTanksTerrainColor(x));
+  }
+}
+
 void drawPocketTanksTank(int tankIndex) {
   int x = ptTankX[tankIndex];
   int y = getPocketTanksTankY(tankIndex);
@@ -1424,6 +1451,60 @@ void drawPocketTanksTank(int tankIndex) {
 
   for (int offset = -1; offset <= 1; offset++) {
     gfx->drawLine(x, y - 1 + offset, barrelX, barrelY + offset, turretColor);
+  }
+}
+
+void redrawPocketTanksProjectileArea(int centerX, int centerY) {
+  int patchRadius = ptProjectileRadius + 3;
+  int left = centerX - patchRadius;
+  int right = centerX + patchRadius;
+  int top = centerY - patchRadius;
+  int bottom = centerY + patchRadius;
+
+  if (right < 0 || left >= screenW || bottom < 0 || top >= ptFieldBottom) return;
+
+  if (left < 0) left = 0;
+  if (right >= screenW) right = screenW - 1;
+  if (top < 0) top = 0;
+  if (bottom >= ptFieldBottom) bottom = ptFieldBottom - 1;
+
+  for (int x = left; x <= right; x++) {
+    int terrainY = getPocketTanksTerrainY(x);
+
+    if (top < terrainY) {
+      int skyBottom = bottom;
+      if (skyBottom >= terrainY) skyBottom = terrainY - 1;
+
+      if (skyBottom >= top) {
+        gfx->fillRect(x, top, 1, skyBottom - top + 1, RGB565_BLACK);
+      }
+    }
+
+    if (bottom >= terrainY) {
+      int groundTop = top;
+      if (groundTop < terrainY) groundTop = terrainY;
+
+      if (groundTop <= bottom) {
+        gfx->fillRect(x, groundTop, 1, bottom - groundTop + 1, getPocketTanksTerrainColor(x));
+      }
+    }
+  }
+
+  if (top < 54) {
+    drawPocketTanksHeader();
+  }
+
+  drawPocketTanksTank(0);
+  drawPocketTanksTank(1);
+}
+
+void drawPocketTanksProjectileFrame(int previousX, int previousY, int currentX, int currentY) {
+  if (previousX >= 0 && previousY >= 0) {
+    redrawPocketTanksProjectileArea(previousX, previousY);
+  }
+
+  if (currentX >= 0 && currentX < screenW && currentY >= 0 && currentY < ptFieldBottom) {
+    gfx->fillCircle(currentX, currentY, ptProjectileRadius, RGB565_YELLOW);
   }
 }
 
@@ -1454,25 +1535,14 @@ void drawPocketTanksControls() {
 void drawPocketTanksScene(int projectileX, int projectileY, bool showExplosion, int explosionX, int explosionY) {
   gfx->fillScreen(RGB565_BLACK);
 
-  char scoreLine[48];
-  snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d", ptScoreP1, ptScoreP2);
-  drawCenteredText(scoreLine, 8, 1, RGB565_WHITE);
-
-  char turnLine[32];
-  snprintf(turnLine, sizeof(turnLine), "PLAYER %d TURN", ptCurrentPlayer + 1);
-  drawCenteredText(turnLine, 26, 2, (ptCurrentPlayer == 0) ? RGB565_RED : RGB565_CYAN);
-
-  for (int x = 0; x < PT_TERRAIN_W; x++) {
-    int y = ptTerrain[x];
-    uint16_t terrainColor = (x % 3 == 0) ? rgb888to565(80, 164, 74) : rgb888to565(65, 132, 58);
-    gfx->fillRect(x, y, 1, ptFieldBottom - y, terrainColor);
-  }
+  drawPocketTanksHeader();
+  drawPocketTanksTerrain();
 
   drawPocketTanksTank(0);
   drawPocketTanksTank(1);
 
   if (projectileX >= 0 && projectileX < screenW && projectileY >= 0 && projectileY < ptFieldBottom) {
-    gfx->fillCircle(projectileX, projectileY, 3, RGB565_YELLOW);
+    gfx->fillCircle(projectileX, projectileY, ptProjectileRadius, RGB565_YELLOW);
   }
 
   if (showExplosion) {
@@ -2363,10 +2433,15 @@ void firePocketTanksShot() {
   float projectileY = (float)tankY - sin(angleRad) * 20.0f;
   float velocityX = cos(angleRad) * speed * (float)dir;
   float velocityY = -sin(angleRad) * speed;
+  int previousX = -1;
+  int previousY = -1;
 
   beepMove();
+  drawPocketTanksGameScreen();
 
   for (int frame = 0; frame < 230; frame++) {
+    unsigned long frameStart = millis();
+
     projectileX += velocityX;
     projectileY += velocityY;
     velocityY += 0.24f;
@@ -2375,24 +2450,53 @@ void firePocketTanksShot() {
     int y = (int)(projectileY + 0.5f);
 
     if (x < 0 || x >= screenW || y > ptFieldBottom) {
+      if (previousX >= 0 && previousY >= 0) {
+        redrawPocketTanksProjectileArea(previousX, previousY);
+      }
+
       switchPocketTanksTurn();
       return;
     }
 
     if (y >= 0 && pocketTanksProjectileHitsTank(x, y, target)) {
+      if (previousX >= 0 && previousY >= 0) {
+        redrawPocketTanksProjectileArea(previousX, previousY);
+      }
+
       explodePocketTanksAt(x, y);
       finishPocketTanksGame(shooter);
       return;
     }
 
     if (y >= 0 && y >= getPocketTanksTerrainY(x)) {
+      if (previousX >= 0 && previousY >= 0) {
+        redrawPocketTanksProjectileArea(previousX, previousY);
+      }
+
       explodePocketTanksAt(x, y);
       switchPocketTanksTurn();
       return;
     }
 
-    drawPocketTanksScene(x, y, false, -1, -1);
-    delay(18);
+    if (y >= 0) {
+      drawPocketTanksProjectileFrame(previousX, previousY, x, y);
+      previousX = x;
+      previousY = y;
+    } else if (previousX >= 0 && previousY >= 0) {
+      redrawPocketTanksProjectileArea(previousX, previousY);
+      previousX = -1;
+      previousY = -1;
+    }
+
+    unsigned long elapsed = millis() - frameStart;
+
+    if (elapsed < ptProjectileFrameMs) {
+      delay(ptProjectileFrameMs - elapsed);
+    }
+  }
+
+  if (previousX >= 0 && previousY >= 0) {
+    redrawPocketTanksProjectileArea(previousX, previousY);
   }
 
   switchPocketTanksTurn();
