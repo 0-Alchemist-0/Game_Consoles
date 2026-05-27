@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 4.0 - 2026-05-27 15:32 - Added viewpoint-specific RPSLS network
+// result images from /RPSLS_game/win and /RPSLS_game/lose.
 // Version 3.9 - 2026-05-27 15:03 - Added network Host/Join gameplay for RPSLS
 // using the same WiFi setup flow and hidden-choice result logic as local play.
 // Version 3.8 - 2026-05-27 14:48 - Changed game mode menu Home buttons to Back
@@ -98,8 +100,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 3.9";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V39-2026052715";
+const char *APP_VERSION_TEXT = "Version 4.0";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V40-2026052715";
 
 
 
@@ -331,6 +333,8 @@ const char *rpsWheelImagePath = "/RPSLS_game/general/rpsls_wheel.raw";
 const char *rpsPlayer1WinsPath = "/RPSLS_game/local/player1_wins";
 const char *rpsPlayer2WinsPath = "/RPSLS_game/local/player2_wins";
 const char *rpsDrawPath = "/RPSLS_game/local/draw";
+const char *rpsNetworkWinPath = "/RPSLS_game/win";
+const char *rpsNetworkLosePath = "/RPSLS_game/lose";
 const int btnRpsMenuX = 90;
 const int btnRpsMenuY = 420;
 const int btnRpsMenuW = 140;
@@ -1156,6 +1160,21 @@ const char *getRpsWinImageBaseName(int winningChoice, int losingChoice) {
   return nullptr;
 }
 
+const char *getRpsLoseImageBaseName(int winningChoice, int losingChoice) {
+  if (winningChoice == 0 && losingChoice == 2) return "lose_scissors_to_rock";
+  if (winningChoice == 0 && losingChoice == 3) return "lose_lizard_to_rock";
+  if (winningChoice == 1 && losingChoice == 0) return "lose_rock_to_paper";
+  if (winningChoice == 1 && losingChoice == 4) return "lose_spock_to_paper";
+  if (winningChoice == 2 && losingChoice == 1) return "lose_paper_to_scissors";
+  if (winningChoice == 2 && losingChoice == 3) return "lose_lizard_to_scissors";
+  if (winningChoice == 3 && losingChoice == 1) return "lose_paper_to_lizard";
+  if (winningChoice == 3 && losingChoice == 4) return "lose_spock_to_lizard";
+  if (winningChoice == 4 && losingChoice == 0) return "lose_rock_to_spock";
+  if (winningChoice == 4 && losingChoice == 2) return "lose_scissors_to_spock";
+
+  return nullptr;
+}
+
 const char *getRpsDrawImageBaseName(int choice) {
   if (choice == 0) return "draw_rock";
   if (choice == 1) return "draw_paper";
@@ -1192,6 +1211,18 @@ bool drawRpsWinningImage() {
 
   int winningChoice = (rpsWinner == 1) ? rpsP1Choice : rpsP2Choice;
   int losingChoice = (rpsWinner == 1) ? rpsP2Choice : rpsP1Choice;
+
+  if (!localGame && (myPlayer == '1' || myPlayer == '2')) {
+    bool localPlayerWon = (myPlayer == '1' && rpsWinner == 1) ||
+                          (myPlayer == '2' && rpsWinner == 2);
+    const char *baseName = localPlayerWon
+                           ? getRpsWinImageBaseName(winningChoice, losingChoice)
+                           : getRpsLoseImageBaseName(winningChoice, losingChoice);
+    const char *folder = localPlayerWon ? rpsNetworkWinPath : rpsNetworkLosePath;
+
+    return drawRpsRawResultImage(folder, baseName);
+  }
+
   const char *baseName = getRpsWinImageBaseName(winningChoice, losingChoice);
   const char *folder = (rpsWinner == 1) ? rpsPlayer1WinsPath : rpsPlayer2WinsPath;
 
@@ -1397,7 +1428,7 @@ void drawRpsResultScreen() {
     if (rpsWinner == 0) {
       drawCenteredText("Missing draw image", 150, 2, RGB565_RED);
     } else {
-      drawCenteredText("Missing win image", 150, 2, RGB565_RED);
+      drawCenteredText("Missing result image", 150, 2, RGB565_RED);
     }
 
     char scoreLine[48];
