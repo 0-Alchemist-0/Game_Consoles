@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 4.1 - 2026-05-27 16:59 - Replaced Battleship with a Pocket Tanks
+// menu and added first local artillery gameplay with destructible terrain.
 // Version 4.0 - 2026-05-27 15:32 - Added viewpoint-specific RPSLS network
 // result images from /RPSLS_game/win and /RPSLS_game/lose.
 // Version 3.9 - 2026-05-27 15:03 - Added network Host/Join gameplay for RPSLS
@@ -100,8 +102,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 4.0";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V40-2026052715";
+const char *APP_VERSION_TEXT = "Version 4.1";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V41-2026052716";
 
 
 
@@ -185,7 +187,11 @@ enum AppState {
   STATE_RPS_WAITING_CHOICE,
   STATE_RPS_RESULT,
   STATE_RPS_PLACEHOLDER,
-  STATE_BATTLESHIP,
+  STATE_POCKET_TANKS,
+  STATE_PT_PLAYING,
+  STATE_PT_RESULT,
+  STATE_PT_PLACEHOLDER,
+  STATE_EMPTY_GAME,
   STATE_MENU,
   STATE_SETTINGS,
   STATE_EXIT,
@@ -255,6 +261,17 @@ int rpsScoreP2 = 0;
 int rpsScoreDraw = 0;
 const char *rpsPlaceholderTitle = "RPS";
 
+static const int PT_TERRAIN_W = 320;
+int ptTerrain[PT_TERRAIN_W];
+int ptTankX[2] = {42, 278};
+int ptCurrentPlayer = 0;
+int ptAngle[2] = {45, 45};
+int ptPower[2] = {62, 62};
+int ptScoreP1 = 0;
+int ptScoreP2 = 0;
+int ptWinner = 0;
+const char *ptPlaceholderTitle = "POCKET TANKS";
+
 bool touchWasDown = false;
 unsigned long lastTouchTime = 0;
 const unsigned long touchDebounceMs = 80;
@@ -315,7 +332,7 @@ const int btnTttHomeH = 45;
 const int btnGamesX = 35;
 const int btnGamesTttY = 135;
 const int btnGamesRpsY = 205;
-const int btnGamesBattleshipY = 275;
+const int btnGamesPocketTanksY = 275;
 const int btnGamesHomeY = 390;
 const int btnGamesW = 250;
 const int btnGamesH = 52;
@@ -339,6 +356,33 @@ const int btnRpsMenuX = 90;
 const int btnRpsMenuY = 420;
 const int btnRpsMenuW = 140;
 const int btnRpsMenuH = 40;
+
+const int ptFieldTop = 0;
+const int ptFieldBottom = 355;
+const int ptTankW = 22;
+const int ptTankH = 12;
+const int ptExplosionRadius = 24;
+
+const int btnPtAngleDownX = 8;
+const int btnPtAngleDownY = 370;
+const int btnPtAngleUpX = 86;
+const int btnPtAngleUpY = 370;
+const int btnPtPowerDownX = 164;
+const int btnPtPowerDownY = 370;
+const int btnPtPowerUpX = 242;
+const int btnPtPowerUpY = 370;
+const int btnPtControlW = 70;
+const int btnPtControlH = 36;
+
+const int btnPtFireX = 20;
+const int btnPtFireY = 424;
+const int btnPtFireW = 130;
+const int btnPtFireH = 40;
+
+const int btnPtMenuX = 170;
+const int btnPtMenuY = 424;
+const int btnPtMenuW = 130;
+const int btnPtMenuH = 40;
 
 const int homeButtonRawW = 320;
 const int homeButtonRawH = 90;
@@ -664,6 +708,26 @@ void resetRpsScore() {
   rpsScoreP2 = 0;
   rpsScoreDraw = 0;
   saveRpsScore();
+}
+
+void loadPocketTanksScore() {
+  prefs.begin("pt_score", true);
+  ptScoreP1 = prefs.getInt("p1", 0);
+  ptScoreP2 = prefs.getInt("p2", 0);
+  prefs.end();
+}
+
+void savePocketTanksScore() {
+  prefs.begin("pt_score", false);
+  prefs.putInt("p1", ptScoreP1);
+  prefs.putInt("p2", ptScoreP2);
+  prefs.end();
+}
+
+void resetPocketTanksScore() {
+  ptScoreP1 = 0;
+  ptScoreP2 = 0;
+  savePocketTanksScore();
 }
 
 // ============================================================================
@@ -1305,6 +1369,121 @@ void drawScoreBar() {
   drawCenteredText(turnLine, 42, 2, (localGame || myTurn) ? RGB565_GREEN : RGB565_YELLOW);
 }
 
+int getPocketTanksTerrainY(int x) {
+  if (x < 0) x = 0;
+  if (x >= PT_TERRAIN_W) x = PT_TERRAIN_W - 1;
+  return ptTerrain[x];
+}
+
+int getPocketTanksTankY(int tankIndex) {
+  int y = getPocketTanksTerrainY(ptTankX[tankIndex]) - ptTankH;
+
+  if (y < 36) y = 36;
+  if (y > ptFieldBottom - ptTankH) y = ptFieldBottom - ptTankH;
+
+  return y;
+}
+
+void generatePocketTanksTerrain() {
+  for (int x = 0; x < PT_TERRAIN_W; x++) {
+    float waveA = sin((float)x * 0.035f) * 22.0f;
+    float waveB = sin((float)x * 0.082f + 1.4f) * 11.0f;
+    int y = 286 + (int)waveA + (int)waveB;
+
+    if (y < 242) y = 242;
+    if (y > ptFieldBottom - 18) y = ptFieldBottom - 18;
+
+    ptTerrain[x] = y;
+  }
+
+  for (int tank = 0; tank < 2; tank++) {
+    int platformY = (tank == 0) ? 292 : 296;
+
+    for (int dx = -18; dx <= 18; dx++) {
+      int x = ptTankX[tank] + dx;
+      if (x >= 0 && x < PT_TERRAIN_W) {
+        ptTerrain[x] = platformY;
+      }
+    }
+  }
+}
+
+void drawPocketTanksTank(int tankIndex) {
+  int x = ptTankX[tankIndex];
+  int y = getPocketTanksTankY(tankIndex);
+  uint16_t bodyColor = (tankIndex == 0) ? RGB565_RED : RGB565_BLUE;
+  uint16_t turretColor = (tankIndex == ptCurrentPlayer) ? RGB565_YELLOW : RGB565_WHITE;
+  int dir = (tankIndex == 0) ? 1 : -1;
+  float angleRad = (float)ptAngle[tankIndex] * 0.01745329252f;
+  int barrelX = x + (int)(cos(angleRad) * 23.0f * dir);
+  int barrelY = y - 1 - (int)(sin(angleRad) * 23.0f);
+
+  gfx->fillRoundRect(x - ptTankW / 2, y, ptTankW, ptTankH, 4, bodyColor);
+  gfx->drawRoundRect(x - ptTankW / 2, y, ptTankW, ptTankH, 4, RGB565_WHITE);
+  gfx->fillCircle(x, y, 5, turretColor);
+
+  for (int offset = -1; offset <= 1; offset++) {
+    gfx->drawLine(x, y - 1 + offset, barrelX, barrelY + offset, turretColor);
+  }
+}
+
+void drawPocketTanksControls() {
+  gfx->fillRect(0, ptFieldBottom, screenW, screenH - ptFieldBottom, RGB565_BLACK);
+  gfx->drawLine(0, ptFieldBottom, screenW, ptFieldBottom, RGB565_WHITE);
+
+  char line[64];
+  snprintf(line, sizeof(line), "P%d  Angle:%d  Power:%d",
+           ptCurrentPlayer + 1, ptAngle[ptCurrentPlayer], ptPower[ptCurrentPlayer]);
+  drawCenteredText(line, 357, 1, RGB565_YELLOW);
+
+  drawButton(btnPtAngleDownX, btnPtAngleDownY, btnPtControlW, btnPtControlH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "ANG-", 1);
+  drawButton(btnPtAngleUpX, btnPtAngleUpY, btnPtControlW, btnPtControlH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "ANG+", 1);
+  drawButton(btnPtPowerDownX, btnPtPowerDownY, btnPtControlW, btnPtControlH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "POW-", 1);
+  drawButton(btnPtPowerUpX, btnPtPowerUpY, btnPtControlW, btnPtControlH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "POW+", 1);
+
+  drawButton(btnPtFireX, btnPtFireY, btnPtFireW, btnPtFireH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "FIRE", 2);
+  drawButton(btnPtMenuX, btnPtMenuY, btnPtMenuW, btnPtMenuH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
+}
+
+void drawPocketTanksScene(int projectileX, int projectileY, bool showExplosion, int explosionX, int explosionY) {
+  gfx->fillScreen(RGB565_BLACK);
+
+  char scoreLine[48];
+  snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d", ptScoreP1, ptScoreP2);
+  drawCenteredText(scoreLine, 8, 1, RGB565_WHITE);
+
+  char turnLine[32];
+  snprintf(turnLine, sizeof(turnLine), "PLAYER %d TURN", ptCurrentPlayer + 1);
+  drawCenteredText(turnLine, 26, 2, (ptCurrentPlayer == 0) ? RGB565_RED : RGB565_CYAN);
+
+  for (int x = 0; x < PT_TERRAIN_W; x++) {
+    int y = ptTerrain[x];
+    uint16_t terrainColor = (x % 3 == 0) ? rgb888to565(80, 164, 74) : rgb888to565(65, 132, 58);
+    gfx->fillRect(x, y, 1, ptFieldBottom - y, terrainColor);
+  }
+
+  drawPocketTanksTank(0);
+  drawPocketTanksTank(1);
+
+  if (projectileX >= 0 && projectileX < screenW && projectileY >= 0 && projectileY < ptFieldBottom) {
+    gfx->fillCircle(projectileX, projectileY, 3, RGB565_YELLOW);
+  }
+
+  if (showExplosion) {
+    gfx->fillCircle(explosionX, explosionY, ptExplosionRadius / 2, RGB565_RED);
+    gfx->drawCircle(explosionX, explosionY, ptExplosionRadius, RGB565_YELLOW);
+    gfx->drawCircle(explosionX, explosionY, ptExplosionRadius - 3, RGB565_WHITE);
+  }
+
+  drawPocketTanksControls();
+}
+
 // ============================================================================
 // SCREENS
 // ============================================================================
@@ -1347,8 +1526,8 @@ void drawGamesScreen() {
   drawButton(btnGamesX, btnGamesRpsY, btnGamesW, btnGamesH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "ROCK-PAPER-SCISSORS", 2);
 
-  drawButton(btnGamesX, btnGamesBattleshipY, btnGamesW, btnGamesH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BATTLESHIP", 2);
+  drawButton(btnGamesX, btnGamesPocketTanksY, btnGamesW, btnGamesH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "POCKET TANKS", 2);
 
   drawButton(btnGamesX, btnGamesHomeY, btnGamesW, btnGamesHomeH,
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "HOME", 2);
@@ -1459,6 +1638,77 @@ void drawEmptyGameScreen(const char *title, int state) {
   gfx->fillScreen(RGB565_BLACK);
 
   drawCenteredText(title, 110, 2, RGB565_CYAN);
+
+  drawButton(btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+}
+
+void drawPocketTanksMenuScreen() {
+  localGame = false;
+  appState = STATE_POCKET_TANKS;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("POCKET TANKS", 35, 3, RGB565_WHITE);
+  drawCenteredText("LOCAL ARTILLERY", 75, 2, RGB565_CYAN);
+
+  char scoreLine[48];
+  snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d", ptScoreP1, ptScoreP2);
+  drawCenteredText(scoreLine, 145, 2, RGB565_YELLOW);
+
+  drawButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "LOCAL", 2);
+
+  drawButton(btnHostX, btnHostY, btnHostW, btnHostH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "HOST", 2);
+
+  drawButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "JOIN", 2);
+
+  drawButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH,
+             RGB565_RED, RGB565_WHITE, RGB565_WHITE, "RESET SCOR", 2);
+
+  drawButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "BACK", 2);
+}
+
+void drawPocketTanksGameScreen() {
+  appState = STATE_PT_PLAYING;
+  drawPocketTanksScene(-1, -1, false, -1, -1);
+}
+
+void drawPocketTanksResultScreen() {
+  appState = STATE_PT_RESULT;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("POCKET TANKS", 38, 3, RGB565_WHITE);
+
+  if (ptWinner == 1) {
+    drawCenteredText("PLAYER 1 WINS", 130, 3, RGB565_RED);
+  } else if (ptWinner == 2) {
+    drawCenteredText("PLAYER 2 WINS", 130, 3, RGB565_CYAN);
+  } else {
+    drawCenteredText("ROUND OVER", 130, 3, RGB565_YELLOW);
+  }
+
+  char scoreLine[48];
+  snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d", ptScoreP1, ptScoreP2);
+  drawCenteredText(scoreLine, 218, 2, RGB565_WHITE);
+
+  drawButton(btnPlayAgainX, btnPlayAgainY, btnPlayAgainW, btnPlayAgainH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "PLAY AGAIN", 2);
+
+  drawButton(btnResultMenuX, btnResultMenuY, btnResultMenuW, btnResultMenuH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
+}
+
+void drawPocketTanksPlaceholderScreen(const char *title) {
+  ptPlaceholderTitle = title;
+  appState = STATE_PT_PLACEHOLDER;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText(ptPlaceholderTitle, 90, 2, RGB565_CYAN);
+  drawCenteredText("Network mode", 140, 2, RGB565_YELLOW);
+  drawCenteredText("coming soon", 168, 2, RGB565_YELLOW);
 
   drawButton(btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
@@ -2013,6 +2263,141 @@ void applyLocalRpsNetworkChoice(int choice) {
   finishRpsNetworkGameIfReady();
 }
 
+void resetPocketTanksRound() {
+  ptCurrentPlayer = 0;
+  ptWinner = 0;
+  ptAngle[0] = 45;
+  ptAngle[1] = 45;
+  ptPower[0] = 62;
+  ptPower[1] = 62;
+  generatePocketTanksTerrain();
+}
+
+void startPocketTanksLocalGame() {
+  stopNetwork();
+  localGame = true;
+  resetPocketTanksRound();
+  beepStart();
+  drawPocketTanksGameScreen();
+}
+
+void switchPocketTanksTurn() {
+  ptCurrentPlayer = 1 - ptCurrentPlayer;
+  drawPocketTanksGameScreen();
+}
+
+void carvePocketTanksCrater(int centerX, int centerY) {
+  for (int x = centerX - ptExplosionRadius; x <= centerX + ptExplosionRadius; x++) {
+    if (x < 0 || x >= PT_TERRAIN_W) continue;
+
+    int dx = x - centerX;
+    int depth = (int)sqrt((float)(ptExplosionRadius * ptExplosionRadius - dx * dx));
+    int craterY = centerY + depth;
+
+    if (craterY > ptTerrain[x]) {
+      ptTerrain[x] = craterY;
+
+      if (ptTerrain[x] > ptFieldBottom) {
+        ptTerrain[x] = ptFieldBottom;
+      }
+    }
+  }
+}
+
+bool pocketTanksProjectileHitsTank(int projectileX, int projectileY, int tankIndex) {
+  int tankCenterX = ptTankX[tankIndex];
+  int tankCenterY = getPocketTanksTankY(tankIndex) + ptTankH / 2;
+  int dx = projectileX - tankCenterX;
+  int dy = projectileY - tankCenterY;
+
+  return (dx * dx + dy * dy) <= 18 * 18;
+}
+
+void explodePocketTanksAt(int x, int y) {
+  carvePocketTanksCrater(x, y);
+  tone(PIN_BUZZER, 900, 120);
+  drawPocketTanksScene(-1, -1, true, x, y);
+  delay(300);
+}
+
+void finishPocketTanksGame(int winnerIndex) {
+  ptWinner = winnerIndex + 1;
+
+  if (ptWinner == 1) {
+    ptScoreP1++;
+  } else {
+    ptScoreP2++;
+  }
+
+  savePocketTanksScore();
+  beepWin();
+  drawPocketTanksResultScreen();
+}
+
+void adjustPocketTanksAngle(int delta) {
+  ptAngle[ptCurrentPlayer] += delta;
+
+  if (ptAngle[ptCurrentPlayer] < 5) ptAngle[ptCurrentPlayer] = 5;
+  if (ptAngle[ptCurrentPlayer] > 85) ptAngle[ptCurrentPlayer] = 85;
+
+  drawPocketTanksGameScreen();
+}
+
+void adjustPocketTanksPower(int delta) {
+  ptPower[ptCurrentPlayer] += delta;
+
+  if (ptPower[ptCurrentPlayer] < 20) ptPower[ptCurrentPlayer] = 20;
+  if (ptPower[ptCurrentPlayer] > 100) ptPower[ptCurrentPlayer] = 100;
+
+  drawPocketTanksGameScreen();
+}
+
+void firePocketTanksShot() {
+  int shooter = ptCurrentPlayer;
+  int target = 1 - shooter;
+  int dir = (shooter == 0) ? 1 : -1;
+  int tankY = getPocketTanksTankY(shooter);
+  float angleRad = (float)ptAngle[shooter] * 0.01745329252f;
+  float speed = 2.0f + (float)ptPower[shooter] * 0.15f;
+  float projectileX = (float)ptTankX[shooter] + cos(angleRad) * 20.0f * (float)dir;
+  float projectileY = (float)tankY - sin(angleRad) * 20.0f;
+  float velocityX = cos(angleRad) * speed * (float)dir;
+  float velocityY = -sin(angleRad) * speed;
+
+  beepMove();
+
+  for (int frame = 0; frame < 230; frame++) {
+    projectileX += velocityX;
+    projectileY += velocityY;
+    velocityY += 0.24f;
+
+    int x = (int)(projectileX + 0.5f);
+    int y = (int)(projectileY + 0.5f);
+
+    if (x < 0 || x >= screenW || y > ptFieldBottom) {
+      switchPocketTanksTurn();
+      return;
+    }
+
+    if (y >= 0 && pocketTanksProjectileHitsTank(x, y, target)) {
+      explodePocketTanksAt(x, y);
+      finishPocketTanksGame(shooter);
+      return;
+    }
+
+    if (y >= 0 && y >= getPocketTanksTerrainY(x)) {
+      explodePocketTanksAt(x, y);
+      switchPocketTanksTurn();
+      return;
+    }
+
+    drawPocketTanksScene(x, y, false, -1, -1);
+    delay(18);
+  }
+
+  switchPocketTanksTurn();
+}
+
 void finishGame(char result) {
   gameOver = true;
   winner = result;
@@ -2257,9 +2642,9 @@ void handleGamesTouch(int x, int y) {
     return;
   }
 
-  if (inRect(x, y, btnGamesX, btnGamesBattleshipY, btnGamesW, btnGamesH)) {
+  if (inRect(x, y, btnGamesX, btnGamesPocketTanksY, btnGamesW, btnGamesH)) {
     beepClick();
-    drawEmptyGameScreen("BATTLESHIP", STATE_BATTLESHIP);
+    drawPocketTanksMenuScreen();
     return;
   }
 
@@ -2274,6 +2659,96 @@ void handleEmptyGameTouch(int x, int y) {
   if (inRect(x, y, btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH)) {
     beepClick();
     drawGamesScreen();
+    return;
+  }
+}
+
+void handlePocketTanksMenuTouch(int x, int y) {
+  if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
+    startPocketTanksLocalGame();
+    return;
+  }
+
+  if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
+    beepClick();
+    drawPocketTanksPlaceholderScreen("POCKET TANKS HOST");
+    return;
+  }
+
+  if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
+    beepClick();
+    drawPocketTanksPlaceholderScreen("POCKET TANKS JOIN");
+    return;
+  }
+
+  if (inRect(x, y, btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH)) {
+    beepClick();
+    resetPocketTanksScore();
+    drawPocketTanksMenuScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH)) {
+    beepClick();
+    drawGamesScreen();
+    return;
+  }
+}
+
+void handlePocketTanksPlaceholderTouch(int x, int y) {
+  if (inRect(x, y, btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH)) {
+    beepClick();
+    drawPocketTanksMenuScreen();
+    return;
+  }
+}
+
+void handlePocketTanksPlayingTouch(int x, int y) {
+  if (inRect(x, y, btnPtAngleDownX, btnPtAngleDownY, btnPtControlW, btnPtControlH)) {
+    beepClick();
+    adjustPocketTanksAngle(-5);
+    return;
+  }
+
+  if (inRect(x, y, btnPtAngleUpX, btnPtAngleUpY, btnPtControlW, btnPtControlH)) {
+    beepClick();
+    adjustPocketTanksAngle(5);
+    return;
+  }
+
+  if (inRect(x, y, btnPtPowerDownX, btnPtPowerDownY, btnPtControlW, btnPtControlH)) {
+    beepClick();
+    adjustPocketTanksPower(-5);
+    return;
+  }
+
+  if (inRect(x, y, btnPtPowerUpX, btnPtPowerUpY, btnPtControlW, btnPtControlH)) {
+    beepClick();
+    adjustPocketTanksPower(5);
+    return;
+  }
+
+  if (inRect(x, y, btnPtFireX, btnPtFireY, btnPtFireW, btnPtFireH)) {
+    firePocketTanksShot();
+    return;
+  }
+
+  if (inRect(x, y, btnPtMenuX, btnPtMenuY, btnPtMenuW, btnPtMenuH)) {
+    beepClick();
+    drawPocketTanksMenuScreen();
+    return;
+  }
+}
+
+void handlePocketTanksResultTouch(int x, int y) {
+  if (inRect(x, y, btnPlayAgainX, btnPlayAgainY, btnPlayAgainW, btnPlayAgainH)) {
+    startPocketTanksLocalGame();
+    return;
+  }
+
+  if (inRect(x, y, btnResultMenuX, btnResultMenuY, btnResultMenuW, btnResultMenuH)) {
+    beepClick();
+    drawPocketTanksMenuScreen();
     return;
   }
 }
@@ -2709,7 +3184,15 @@ void handleTouch(int x, int y) {
     handleRpsResultTouch(x, y);
   } else if (appState == STATE_RPS_PLACEHOLDER) {
     handleRpsPlaceholderTouch(x, y);
-  } else if (appState == STATE_BATTLESHIP) {
+  } else if (appState == STATE_POCKET_TANKS) {
+    handlePocketTanksMenuTouch(x, y);
+  } else if (appState == STATE_PT_PLAYING) {
+    handlePocketTanksPlayingTouch(x, y);
+  } else if (appState == STATE_PT_RESULT) {
+    handlePocketTanksResultTouch(x, y);
+  } else if (appState == STATE_PT_PLACEHOLDER) {
+    handlePocketTanksPlaceholderTouch(x, y);
+  } else if (appState == STATE_EMPTY_GAME) {
     handleEmptyGameTouch(x, y);
   } else if (appState == STATE_MENU) {
     handleMenuTouch(x, y);
@@ -2792,6 +3275,7 @@ void setup() {
 
   loadScore();
   loadRpsScore();
+  loadPocketTanksScore();
   loadNetworkSettings();
   clearBoard();
   WiFi.mode(WIFI_OFF);
