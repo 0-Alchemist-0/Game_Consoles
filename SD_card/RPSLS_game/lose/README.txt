@@ -1,24 +1,25 @@
-RPSLS winning screens - YOU WON version
+RPSLS losing screens - YOU LOSE version
 
-Changes:
-- Header text changed to YOU WON
-- Cards preserved
-- Lower part removed / left empty
+Design:
+- Header text: YOU LOSE
+- Left card = player's losing card
+- Right card = opponent's winning card
+- Lower part left empty
 
 Format:
 - RGB565 little-endian
 - 320x480
 
 RAW files:
-  win_rock_crushes_scissors.raw
-  win_rock_crushes_lizard.raw
-  win_paper_covers_rock.raw
-  win_paper_releases_spock.raw
-  win_scissors_cuts_paper.raw
-  win_scissors_cuts_lizard.raw
-  win_lizard_poisons_spock.raw
-  win_lizard_eats_paper.raw
-  win_spock_vaporizes_rock.raw
-  win_spock_smashes_scissors.raw
+  lose_scissors_to_rock.raw
+  lose_lizard_to_rock.raw
+  lose_rock_to_paper.raw
+  lose_spock_to_paper.raw
+  lose_paper_to_scissors.raw
+  lose_lizard_to_scissors.raw
+  lose_spock_to_lizard.raw
+  lose_paper_to_lizard.raw
+  lose_rock_to_spock.raw
+  lose_scissors_to_spock.raw
 
 Preview PNG files are also included.
