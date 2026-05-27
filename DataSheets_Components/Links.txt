@@ -4,3 +4,6 @@ https://www.waveshare.com/3.5inch-capacitive-touch-lcd.htm?srsltid=AfmBOooZHBn9E
 
 https://lvgl.io/tools/imageconverter
 https://sourceforge.net/projects/lcd-image-converter/
+
+
+https://www.printables.com/model/553096-tp4056-usb-c-model-li-ion-charge-circuit-3d-model/files
