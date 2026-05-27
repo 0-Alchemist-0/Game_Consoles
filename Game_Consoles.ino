@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 3.8 - 2026-05-27 14:48 - Changed game mode menu Home buttons to Back
+// buttons that return to the Games selection screen.
 // Version 3.7 - 2026-05-20 22:52 - Added SD-loaded RPSLS draw screens based on
 // the shared choice selected by both players.
 // Version 3.6 - 2026-05-20 22:27 - Added SD-loaded RPSLS winning screens based
@@ -94,8 +96,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 3.7";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V37-2026052022";
+const char *APP_VERSION_TEXT = "Version 3.8";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V38-2026052714";
 
 
 
@@ -1288,7 +1290,7 @@ void drawMenuScreen() {
              RGB565_RED, RGB565_WHITE, RGB565_WHITE, "RESET SCOR", 2);
 
   drawButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH,
-             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "HOME", 2);
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "BACK", 2);
 }
 
 void drawGamesScreen() {
@@ -1334,7 +1336,7 @@ void drawRpsMenuScreen() {
              RGB565_RED, RGB565_WHITE, RGB565_WHITE, "RESET SCOR", 2);
 
   drawButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH,
-             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "HOME", 2);
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "BACK", 2);
 }
 
 void drawRpsChoiceScreen(int playerNumber) {
@@ -2017,7 +2019,7 @@ void handleMenuTouch(int x, int y) {
 
   if (inRect(x, y, btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH)) {
     beepClick();
-    returnToHome(false);
+    drawGamesScreen();
     return;
   }
 }
@@ -2107,7 +2109,7 @@ void handleRpsMenuTouch(int x, int y) {
 
   if (inRect(x, y, btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH)) {
     beepClick();
-    returnToHome(false);
+    drawGamesScreen();
     return;
   }
 }
