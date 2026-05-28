@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 4.5 - 2026-05-28 11:43 - Added explanatory comments across the main
+// source blocks to make hardware, UI, networking, and game logic easier to read.
 // Version 4.4 - 2026-05-27 17:28 - Added randomized Pocket Tanks terrain
 // generation for each new local round.
 // Version 4.3 - 2026-05-27 17:24 - Removed Pocket Tanks full-screen redraws
@@ -86,6 +88,8 @@
 // ============================================================================
 // HARDWARE CONFIG
 // ============================================================================
+// Board wiring for Arduino Nano ESP32 + ILI9488 display, FT6336 touch,
+// microSD card, and buzzer. Keep these values aligned with the physical wiring.
 static const int PIN_LCD_CS   = 21;
 static const int PIN_LCD_DC   = 18;
 static const int PIN_LCD_RST  = 17;
@@ -109,18 +113,21 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 4.4";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V44-2026052717";
+const char *APP_VERSION_TEXT = "Version 4.5";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V45-2026052811";
 
 
 
 // ============================================================================
 // NETWORK CONFIG
 // ============================================================================
+// Shared network settings used by all WiFi game modes. The host creates an
+// access point, and the join device connects to it using the fixed password.
 const char *AP_SSID = "TicTacToe_ESP32";
 const char *AP_PASS = "Alchemist2026";
 const char *JOIN_WIFI_PASS = "Alchemist2026";
 
+// Human-friendly SSID options shown on the Host setup page.
 const char *epicSSIDList[] = {
   "Searching for Network...",
   "404 Wi-Fi Not Found",
@@ -167,6 +174,7 @@ WiFiClient netClient;
 // ============================================================================
 // DISPLAY / STORAGE
 // ============================================================================
+// Global display, persistent flash storage, and SD readiness state.
 Preferences prefs;
 const bool INVERT_DISPLAY_COLORS = true;
 
@@ -185,6 +193,8 @@ bool sdReady = false;
 // ============================================================================
 // APP STATE
 // ============================================================================
+// Every screen has one AppState so the touch router can dispatch input to the
+// correct handler without guessing from what was last drawn.
 enum AppState {
   STATE_HOME,
   STATE_GAMES,
@@ -214,6 +224,8 @@ enum AppState {
 
 AppState appState = STATE_HOME;
 
+// The WiFi setup screens are shared by Tic Tac Toe and RPSLS. This value tells
+// the connection code which game should start after Host/Join connects.
 enum NetworkGameType {
   NETWORK_GAME_TTT,
   NETWORK_GAME_RPS
@@ -221,6 +233,7 @@ enum NetworkGameType {
 
 NetworkGameType activeNetworkGame = NETWORK_GAME_TTT;
 
+// Tic Tac Toe round state.
 char board[3][3];
 char currentPlayer = 'X';
 bool gameOver = false;
@@ -232,10 +245,13 @@ bool networkConnected = false;
 char myPlayer = ' ';
 bool myTurn = false;
 
+// Host SSID selector state.
 static const int MAX_HOST_SSID_VISIBLE = 8;
 int selectedHostSSIDIndex = 0;
 int hostSSIDListOffset = 0;
 
+// Join scan list state. The scan is copied into this array so the UI can page
+// through it without holding WiFi scan resources open.
 static const int MAX_JOIN_NETWORKS = 24;
 static const int MAX_JOIN_NETWORKS_VISIBLE = 8;
 String joinNetworks[MAX_JOIN_NETWORKS];
@@ -243,6 +259,7 @@ int joinNetworkCount = 0;
 int selectedJoinNetwork = -1;
 int joinNetworkListOffset = 0;
 
+// Editable IP fields shared by Settings, Host IP, and Join IP screens.
 uint8_t ipParts[4] = {192, 168, 10, 1};
 char ipFieldText[4][4] = {"192", "168", "10", "1"};
 int activeIpField = 0;
@@ -252,6 +269,8 @@ int scoreX = 0;
 int scoreO = 0;
 int scoreDraw = 0;
 
+// RPSLS uses numeric choices internally:
+// 0 Rock, 1 Paper, 2 Scissors, 3 Lizard, 4 Spock.
 const char *rpsChoiceLabels[] = {
   "ROCK",
   "PAPER",
@@ -268,6 +287,8 @@ int rpsScoreP2 = 0;
 int rpsScoreDraw = 0;
 const char *rpsPlaceholderTitle = "RPS";
 
+// Pocket Tanks keeps one terrain height per screen column. Tanks sit on this
+// height map, and explosions modify it directly.
 static const int PT_TERRAIN_W = 320;
 int ptTerrain[PT_TERRAIN_W];
 int ptTankX[2] = {42, 278};
@@ -279,6 +300,8 @@ int ptScoreP2 = 0;
 int ptWinner = 0;
 const char *ptPlaceholderTitle = "POCKET TANKS";
 
+// Touch edge detection and debounce. Touch actions fire once per press, not on
+// every loop while the finger is still down.
 bool touchWasDown = false;
 unsigned long lastTouchTime = 0;
 const unsigned long touchDebounceMs = 80;
@@ -286,6 +309,8 @@ const unsigned long touchDebounceMs = 80;
 // ============================================================================
 // LAYOUT
 // ============================================================================
+// All UI geometry lives here so button hitboxes match the drawings and can be
+// adjusted without hunting through the touch handlers.
 const int screenW = 320;
 const int screenH = 480;
 
@@ -514,6 +539,8 @@ const int btnHostIpStartH = 40;
 // ============================================================================
 // RAW565 VIDEO PLAYER - /intro/frame_000.raw ... /intro/frame_074.raw
 // ============================================================================
+// RAW565 assets are stored as RGB565 pixels without headers. Drawing in small
+// line blocks keeps RAM usage low while still streaming directly from SD.
 static const int VIDEO_W = 320;
 static const int VIDEO_H = 480;
 static const int RAW_BLOCK_LINES = 32;
@@ -528,6 +555,8 @@ static uint16_t rawDrawBuffer[VIDEO_W * RAW_BLOCK_LINES];
 static uint16_t rawScaleSourceBuffer[homeButtonRawW * homeButtonRawH];
 static uint16_t rawScaleLineBuffer[screenW];
 
+// Draws one unscaled RAW565 image. Used for full-screen backgrounds, intro
+// frames, and result screens.
 bool drawRaw565ImageFromSD(const char *filename, int16_t x, int16_t y, int imageW, int imageH) {
   File rawFile = SD.open(filename, FILE_READ);
 
@@ -585,6 +614,8 @@ bool drawRaw565FromSD(const char *filename, int16_t x, int16_t y) {
   return drawRaw565ImageFromSD(filename, x, y, VIDEO_W, VIDEO_H);
 }
 
+// Used by the home screen buttons. The source button RAWs are larger than the
+// slots in background.raw, so they are nearest-neighbor scaled line by line.
 bool drawScaledRaw565ImageFromSD(const char *filename, int16_t x, int16_t y,
                                  int sourceW, int sourceH,
                                  int destW, int destH) {
@@ -660,6 +691,7 @@ void playVideoRaw(const char *folder, int totalFrames, int targetFps) {
 }
 
 void playBootIntro() {
+  // Intro files are already generated in portrait orientation.
   gfx->setRotation(INTRO_ROTATION);
   gfx->fillScreen(RGB565_BLACK);
 
@@ -673,6 +705,8 @@ void playBootIntro() {
 // ============================================================================
 // SCORE STORAGE
 // ============================================================================
+// Each game has its own Preferences namespace so score resets do not affect
+// other games.
 void loadScore() {
   prefs.begin("ttt_score", true);
   scoreX = prefs.getInt("x", 0);
@@ -742,6 +776,8 @@ void resetPocketTanksScore() {
 // ============================================================================
 // NETWORK SETTINGS
 // ============================================================================
+// The four editable text fields are the source of truth while the keypad is
+// open. Saving clamps them to 0..255 and updates HOST_IP.
 void updateHostIpFromParts() {
   HOST_IP = IPAddress(ipParts[0], ipParts[1], ipParts[2], ipParts[3]);
 }
@@ -798,6 +834,7 @@ void saveNetworkSettings() {
 // ============================================================================
 // AUDIO
 // ============================================================================
+// Short audio cues. They are intentionally non-blocking tone() calls.
 void beepMove()  { tone(PIN_BUZZER, 1000, 40); }
 void beepStart() { tone(PIN_BUZZER, 1400, 70); }
 void beepWin()   { tone(PIN_BUZZER, 2200, 180); }
@@ -807,6 +844,8 @@ void beepClick() { tone(PIN_BUZZER, 1600, 60); }
 // ============================================================================
 // TOUCH
 // ============================================================================
+// FT6336 touch controller helpers. The raw controller coordinates are mapped
+// into the current portrait screen coordinate system.
 uint8_t tpReadReg(uint8_t reg) {
   Wire.beginTransmission(FT6336_ADDR);
   Wire.write(reg);
@@ -844,6 +883,7 @@ bool readTouchScreen(int &sx, int &sy) {
 // ============================================================================
 // DRAW HELPERS
 // ============================================================================
+// Shared primitive drawing helpers used by every screen.
 uint16_t rgb888to565(uint8_t r, uint8_t g, uint8_t b) {
   return ((r & 0xF8) << 8) |
          ((g & 0xFC) << 3) |
@@ -891,6 +931,7 @@ void drawCenteredTextWithShadow(const char *txt, int y, int size, uint16_t color
 }
 
 void drawButton(int x, int y, int w, int h, uint16_t fillColor, uint16_t borderColor, uint16_t textColor, const char *label, int textSize) {
+  // Drawing and touch hitboxes share the same rectangle constants.
   gfx->fillRoundRect(x, y, w, h, 10, fillColor);
   gfx->drawRoundRect(x, y, w, h, 10, borderColor);
 
@@ -952,6 +993,8 @@ void drawRpsWheelLabel(const char *label, int x, int y, int size) {
 }
 
 void drawRpsWheel() {
+  // Prefer the SD-rendered wheel; fall back to a simple generated wheel if the
+  // asset is missing so the game remains playable.
   if (sdReady && SD.exists(rpsWheelImagePath)) {
     if (drawRaw565ImageFromSD(rpsWheelImagePath, 0, 0, screenW, screenH)) {
       return;
@@ -1000,6 +1043,8 @@ void drawRpsWheel() {
 }
 
 int rpsChoiceFromTouch(int x, int y) {
+  // Invisible buttons: convert touch position to polar angle and map that angle
+  // to one of the five wheel slices.
   long dx = x - rpsWheelCenterX;
   long dy = y - rpsWheelCenterY;
   long distanceSquared = dx * dx + dy * dy;
@@ -1021,6 +1066,7 @@ int rpsChoiceFromTouch(int x, int y) {
 }
 
 void drawIpFields() {
+  // Shared IP editor fields for Settings, Host, and Join screens.
   for (int i = 0; i < 4; i++) {
     int x = settingsFieldX + i * (settingsFieldW + settingsFieldGap);
     uint16_t fillColor = (i == activeIpField) ? RGB565_BLUE : RGB565_BLACK;
@@ -1092,6 +1138,8 @@ void drawJoinKeypad() {
 }
 
 void drawJoinNetworkList() {
+  // Shows one page of scanned SSIDs. Empty rows remain visible to keep layout
+  // stable when fewer than eight networks are found.
   for (int i = 0; i < MAX_JOIN_NETWORKS_VISIBLE; i++) {
     int networkIndex = joinNetworkListOffset + i;
     int y = joinNetworkY + i * (joinNetworkH + joinNetworkGap);
@@ -1113,6 +1161,7 @@ void drawJoinNetworkList() {
 }
 
 void drawHostSSIDList() {
+  // Shows one page of selectable host SSID names from epicSSIDList.
   for (int i = 0; i < MAX_HOST_SSID_VISIBLE; i++) {
     int ssidIndex = hostSSIDListOffset + i;
     int y = hostSSIDY + i * (hostSSIDH + hostSSIDGap);
@@ -1136,6 +1185,8 @@ void drawHostSSIDList() {
 // ============================================================================
 // GAME LOGIC
 // ============================================================================
+// Pure game rules and asset-name lookup helpers. These functions do not handle
+// touch routing; they only update game state or answer rule questions.
 void clearBoard() {
   for (int r = 0; r < 3; r++) {
     for (int c = 0; c < 3; c++) {
@@ -1197,6 +1248,7 @@ char checkWinner() {
 }
 
 bool rpsChoiceBeats(int firstChoice, int secondChoice) {
+  // RPSLS win table: each choice beats exactly two other choices.
   if (firstChoice == 0) return secondChoice == 2 || secondChoice == 3;
   if (firstChoice == 1) return secondChoice == 0 || secondChoice == 4;
   if (firstChoice == 2) return secondChoice == 1 || secondChoice == 3;
@@ -1219,6 +1271,7 @@ void resetRpsRound() {
 }
 
 const char *getRpsWinImageBaseName(int winningChoice, int losingChoice) {
+  // Maps a winning pair to the RAW filename stem used on SD.
   if (winningChoice == 0 && losingChoice == 2) return "win_rock_crushes_scissors";
   if (winningChoice == 0 && losingChoice == 3) return "win_rock_crushes_lizard";
   if (winningChoice == 1 && losingChoice == 0) return "win_paper_covers_rock";
@@ -1234,6 +1287,8 @@ const char *getRpsWinImageBaseName(int winningChoice, int losingChoice) {
 }
 
 const char *getRpsLoseImageBaseName(int winningChoice, int losingChoice) {
+  // Network RPSLS is viewpoint-specific. The losing player sees a lose_ image
+  // for the same winning pair.
   if (winningChoice == 0 && losingChoice == 2) return "lose_scissors_to_rock";
   if (winningChoice == 0 && losingChoice == 3) return "lose_lizard_to_rock";
   if (winningChoice == 1 && losingChoice == 0) return "lose_rock_to_paper";
@@ -1286,6 +1341,7 @@ bool drawRpsWinningImage() {
   int losingChoice = (rpsWinner == 1) ? rpsP2Choice : rpsP1Choice;
 
   if (!localGame && (myPlayer == '1' || myPlayer == '2')) {
+    // In network mode each device sees the result from its own perspective.
     bool localPlayerWon = (myPlayer == '1' && rpsWinner == 1) ||
                           (myPlayer == '2' && rpsWinner == 2);
     const char *baseName = localPlayerWon
@@ -1305,6 +1361,7 @@ bool drawRpsWinningImage() {
 // ============================================================================
 // GAME DRAWING
 // ============================================================================
+// Rendering helpers for Tic Tac Toe, RPSLS, and Pocket Tanks gameplay.
 void drawX(int cx, int cy) {
   int margin = 20;
 
@@ -1398,6 +1455,8 @@ uint16_t getPocketTanksTerrainColor(int x) {
 }
 
 void generatePocketTanksTerrain() {
+  // Terrain is generated from three random sine waves. This creates smooth hills
+  // while still changing the shape every round.
   float phaseA = (float)random(0, 6283) / 1000.0f;
   float phaseB = (float)random(0, 6283) / 1000.0f;
   float phaseC = (float)random(0, 6283) / 1000.0f;
@@ -1422,6 +1481,7 @@ void generatePocketTanksTerrain() {
   }
 
   for (int tank = 0; tank < 2; tank++) {
+    // Flatten a small platform under each tank so the starting shot is readable.
     int platformY = ptTerrain[ptTankX[tank]] + random(-8, 9);
 
     if (platformY < 258) platformY = 258;
@@ -1456,6 +1516,7 @@ void drawPocketTanksTerrain() {
 }
 
 void drawPocketTanksTank(int tankIndex) {
+  // The active player gets a yellow turret so turn ownership is visible.
   int x = ptTankX[tankIndex];
   int y = getPocketTanksTankY(tankIndex);
   uint16_t bodyColor = (tankIndex == 0) ? RGB565_RED : RGB565_BLUE;
@@ -1475,6 +1536,8 @@ void drawPocketTanksTank(int tankIndex) {
 }
 
 void redrawPocketTanksBackgroundArea(int left, int top, int right, int bottom) {
+  // Restores only a rectangular patch of sky/terrain. This is used to avoid
+  // full-screen flicker during projectile movement and angle updates.
   if (right < 0 || left >= screenW || bottom < 0 || top >= ptFieldBottom) return;
 
   if (left < 0) left = 0;
@@ -1506,6 +1569,8 @@ void redrawPocketTanksBackgroundArea(int left, int top, int right, int bottom) {
 }
 
 void redrawPocketTanksTankArea(int tankIndex, int oldAngle, int newAngle) {
+  // Clears the bounding box that contains both the old and new barrel positions,
+  // then redraws only the affected tank.
   int x = ptTankX[tankIndex];
   int y = getPocketTanksTankY(tankIndex);
   int dir = (tankIndex == 0) ? 1 : -1;
@@ -1535,6 +1600,8 @@ void redrawPocketTanksTankArea(int tankIndex, int oldAngle, int newAngle) {
 }
 
 void redrawPocketTanksProjectileArea(int centerX, int centerY) {
+  // Restores the old projectile position and then redraws both tanks because the
+  // projectile can pass over a tank sprite.
   int patchRadius = ptProjectileRadius + 3;
   int left = centerX - patchRadius;
   int right = centerX + patchRadius;
@@ -1552,6 +1619,8 @@ void redrawPocketTanksProjectileArea(int centerX, int centerY) {
 }
 
 void drawPocketTanksProjectileFrame(int previousX, int previousY, int currentX, int currentY) {
+  // Animation frame path: restore previous dot, draw current dot. The terrain
+  // and controls stay untouched for a stable frame rate.
   if (previousX >= 0 && previousY >= 0) {
     redrawPocketTanksProjectileArea(previousX, previousY);
   }
@@ -1586,6 +1655,8 @@ void drawPocketTanksControls() {
 }
 
 void drawPocketTanksScene(int projectileX, int projectileY, bool showExplosion, int explosionX, int explosionY) {
+  // Full redraw used when entering the screen, changing turns, or showing an
+  // explosion. The normal projectile animation uses partial redraws instead.
   gfx->fillScreen(RGB565_BLACK);
 
   drawPocketTanksHeader();
@@ -1610,6 +1681,8 @@ void drawPocketTanksScene(int projectileX, int projectileY, bool showExplosion, 
 // ============================================================================
 // SCREENS
 // ============================================================================
+// Screen drawing functions are responsible only for visual layout and setting
+// appState. Touch behavior lives later in the touch routing section.
 void drawMenuScreen() {
   activeNetworkGame = NETWORK_GAME_TTT;
   gfx->fillScreen(RGB565_BLACK);
@@ -1930,6 +2003,7 @@ void drawHomeScreen() {
   bool backgroundDrawn = false;
 
   if (sdReady) {
+    // Home screen uses SD artwork first, then falls back to simple drawn buttons.
     backgroundDrawn = drawRaw565ImageFromSD("/home_screen/background.raw", 0, 0, screenW, screenH);
   }
 
@@ -2002,6 +2076,7 @@ void drawJoinSetupScreen() {
   appState = STATE_JOIN_SETUP;
   gfx->fillScreen(RGB565_BLACK);
 
+  // Join starts with WiFi selection. The IP editor is shown only after NEXT.
   drawCenteredText("JOIN", 18, 3, RGB565_CYAN);
   drawCenteredText("Select WiFi", 64, 2, RGB565_YELLOW);
   drawJoinNetworkList();
@@ -2036,6 +2111,7 @@ void drawHostSetupScreen() {
   appState = STATE_HOST_SETUP;
   gfx->fillScreen(RGB565_BLACK);
 
+  // Host starts by selecting the AP name, then confirms the IP on the next page.
   drawCenteredText("HOST", 18, 3, RGB565_GREEN);
   drawCenteredText("Select SSID", 64, 2, RGB565_YELLOW);
   drawHostSSIDList();
@@ -2069,6 +2145,7 @@ void startRpsNetworkGame();
 // ============================================================================
 // NETWORK
 // ============================================================================
+// Shared WiFi setup and message helpers for network-capable games.
 const char *getNetworkGameCode() {
   return (activeNetworkGame == NETWORK_GAME_RPS) ? "RPS" : "TTT";
 }
@@ -2110,6 +2187,7 @@ void stopNetwork() {
 }
 
 void scanJoinNetworks() {
+  // Scan once, copy unique SSIDs into joinNetworks, then release scan memory.
   joinNetworkCount = 0;
   selectedJoinNetwork = -1;
   joinNetworkListOffset = 0;
@@ -2161,6 +2239,8 @@ void scanJoinNetworks() {
 }
 
 void beginSelectedJoinConnection() {
+  // Join connects to the selected AP first; checkJoinConnection() opens the TCP
+  // game socket once WiFi reports WL_CONNECTED.
   if (selectedJoinNetwork < 0 || selectedJoinNetwork >= joinNetworkCount) return;
 
   saveNetworkSettings();
@@ -2179,6 +2259,8 @@ void beginSelectedJoinConnection() {
 }
 
 void beginHostNetwork() {
+  // Host starts a softAP and TCP server. The actual game starts after a client
+  // socket connects in checkHostClient().
   saveNetworkSettings();
   stopNetwork();
 
@@ -2242,6 +2324,7 @@ void startJoinMode() {
 }
 
 void startNetworkGame() {
+  // Host and Join both call this after START/NEW messages. Branch by game type.
   localGame = false;
 
   if (activeNetworkGame == NETWORK_GAME_RPS) {
@@ -2257,6 +2340,8 @@ void startNetworkGame() {
 }
 
 void checkHostClient() {
+  // Non-blocking accept for the host screen. Once a client arrives, both devices
+  // enter the same game mode.
   if (!isHost || networkConnected) return;
 
   WiFiClient newClient = gameServer.available();
@@ -2272,6 +2357,7 @@ void checkHostClient() {
 }
 
 void checkJoinConnection() {
+  // Non-blocking join progress. First wait for WiFi, then open the TCP socket.
   if (isHost || networkConnected || appState != STATE_CONNECTING_JOIN) return;
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -2287,6 +2373,8 @@ void checkJoinConnection() {
 // ============================================================================
 // GAME ACTIONS
 // ============================================================================
+// Functions in this section change game state in response to validated actions.
+// The touch handlers call these after they decide which button/cell was pressed.
 void startRpsLocalGame() {
   activeNetworkGame = NETWORK_GAME_RPS;
   stopNetwork();
@@ -2297,6 +2385,7 @@ void startRpsLocalGame() {
 }
 
 void completeRpsRoundAndShowResult() {
+  // Used by both local and network RPSLS after both choices are known.
   if (appState == STATE_RPS_RESULT) return;
   if (rpsP1Choice < 0 || rpsP1Choice > 4) return;
   if (rpsP2Choice < 0 || rpsP2Choice > 4) return;
@@ -2344,6 +2433,8 @@ bool hasLocalRpsNetworkChoice() {
 }
 
 void finishRpsNetworkGameIfReady() {
+  // Network RPSLS waits after the local secret choice until the remote choice
+  // arrives over TCP.
   if (appState == STATE_RPS_RESULT) return;
 
   if (rpsP1Choice >= 0 && rpsP2Choice >= 0) {
@@ -2357,6 +2448,7 @@ void finishRpsNetworkGameIfReady() {
 }
 
 void applyRemoteRpsChoice(int choice) {
+  // Remote choices are stored in the opposite player slot from this device.
   if (choice < 0 || choice > 4) return;
 
   activeNetworkGame = NETWORK_GAME_RPS;
@@ -2387,6 +2479,7 @@ void applyLocalRpsNetworkChoice(int choice) {
 }
 
 void resetPocketTanksRound() {
+  // New local artillery round: reset controls and regenerate terrain.
   ptCurrentPlayer = 0;
   ptWinner = 0;
   ptAngle[0] = 45;
@@ -2405,11 +2498,13 @@ void startPocketTanksLocalGame() {
 }
 
 void switchPocketTanksTurn() {
+  // A missed shot or terrain hit passes control to the other player.
   ptCurrentPlayer = 1 - ptCurrentPlayer;
   drawPocketTanksGameScreen();
 }
 
 void carvePocketTanksCrater(int centerX, int centerY) {
+  // Explosion removes terrain by pushing the height map downward inside a circle.
   for (int x = centerX - ptExplosionRadius; x <= centerX + ptExplosionRadius; x++) {
     if (x < 0 || x >= PT_TERRAIN_W) continue;
 
@@ -2428,6 +2523,7 @@ void carvePocketTanksCrater(int centerX, int centerY) {
 }
 
 bool pocketTanksProjectileHitsTank(int projectileX, int projectileY, int tankIndex) {
+  // Circular hit test keeps collision cheap and forgiving on a small screen.
   int tankCenterX = ptTankX[tankIndex];
   int tankCenterY = getPocketTanksTankY(tankIndex) + ptTankH / 2;
   int dx = projectileX - tankCenterX;
@@ -2479,6 +2575,8 @@ void adjustPocketTanksPower(int delta) {
 }
 
 void firePocketTanksShot() {
+  // Simple projectile physics: initial velocity from angle/power plus gravity.
+  // Rendering uses partial redraws for smooth motion.
   int shooter = ptCurrentPlayer;
   int target = 1 - shooter;
   int dir = (shooter == 0) ? 1 : -1;
@@ -2559,6 +2657,7 @@ void firePocketTanksShot() {
 }
 
 void finishGame(char result) {
+  // Tic Tac Toe round completion and persistent score update.
   gameOver = true;
   winner = result;
 
@@ -2580,6 +2679,8 @@ void finishGame(char result) {
 }
 
 void applyMove(int col, int row) {
+  // Applies a Tic Tac Toe move locally. Network moves arrive through the same
+  // function after being parsed from MOVE: messages.
   if (gameOver) return;
   if (col < 0 || col > 2 || row < 0 || row > 2) return;
   if (board[row][col] != ' ') return;
@@ -2623,6 +2724,8 @@ void handleBoardTouch(int x, int y) {
 }
 
 void returnToMenu(bool notifyPeer) {
+  // Returns to the current game's mode menu. notifyPeer is used when leaving a
+  // live network game so the other device is not stranded.
   if (notifyPeer && !localGame) {
     sendNetMessage("LEAVE");
   }
@@ -2652,6 +2755,8 @@ void returnToHome(bool notifyPeer) {
 // ============================================================================
 // NETWORK MESSAGES
 // ============================================================================
+// Text protocol over TCP. Messages are line-based and intentionally simple:
+// START:<game>, NEW:<game>, MOVE:col,row, RPS_CHOICE:n, LEAVE.
 void handleNetMessage(String msg) {
   msg.trim();
 
@@ -2704,6 +2809,7 @@ void handleNetMessage(String msg) {
 }
 
 void pollNetwork() {
+  // Called every loop. It detects disconnects and drains all complete messages.
   if (!networkConnected) return;
 
   if (!netClient || !netClient.connected()) {
@@ -2730,6 +2836,8 @@ void pollNetwork() {
 // ============================================================================
 // TOUCH ROUTING
 // ============================================================================
+// Each handler belongs to one screen. handleTouch() at the end dispatches by
+// appState, keeping screen-specific hitboxes local to their screen.
 void handleMenuTouch(int x, int y) {
   if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
     activeNetworkGame = NETWORK_GAME_TTT;
@@ -2864,6 +2972,7 @@ void handlePocketTanksPlaceholderTouch(int x, int y) {
 }
 
 void handlePocketTanksPlayingTouch(int x, int y) {
+  // Pocket Tanks controls are button-only for now: angle, power, fire, menu.
   if (inRect(x, y, btnPtAngleDownX, btnPtAngleDownY, btnPtControlW, btnPtControlH)) {
     beepClick();
     adjustPocketTanksAngle(-5);
@@ -2948,6 +3057,8 @@ void handleRpsMenuTouch(int x, int y) {
 }
 
 void handleRpsChoiceTouch(int x, int y) {
+  // The RPSLS wheel is drawn as an image, but the five touch areas are computed
+  // from the same wheel geometry.
   if (inRect(x, y, btnRpsMenuX, btnRpsMenuY, btnRpsMenuW, btnRpsMenuH)) {
     beepClick();
     if (localGame) {
@@ -3066,6 +3177,7 @@ void handleIpKeypadAction(int keyIndex) {
 }
 
 void handleSettingsTouch(int x, int y) {
+  // Settings uses the shared IP keypad and persists immediately on SAVE/HOME.
   for (int i = 0; i < 4; i++) {
     int fieldX = settingsFieldX + i * (settingsFieldW + settingsFieldGap);
 
@@ -3111,6 +3223,7 @@ void handleSettingsTouch(int x, int y) {
 }
 
 void handleJoinSetupTouch(int x, int y) {
+  // Join page 1: select a WiFi network, rescan, page through results, or go NEXT.
   for (int i = 0; i < MAX_JOIN_NETWORKS_VISIBLE; i++) {
     int networkIndex = joinNetworkListOffset + i;
     int networkY = joinNetworkY + i * (joinNetworkH + joinNetworkGap);
@@ -3170,6 +3283,7 @@ void handleJoinSetupTouch(int x, int y) {
 }
 
 void handleJoinIpTouch(int x, int y) {
+  // Join page 2: confirm/edit Host IP before opening the connection.
   for (int i = 0; i < 4; i++) {
     int fieldX = settingsFieldX + i * (settingsFieldW + settingsFieldGap);
 
@@ -3210,6 +3324,7 @@ void handleJoinIpTouch(int x, int y) {
 }
 
 void handleHostSetupTouch(int x, int y) {
+  // Host page 1: select the softAP SSID from the curated list.
   for (int i = 0; i < MAX_HOST_SSID_VISIBLE; i++) {
     int ssidIndex = hostSSIDListOffset + i;
     int ssidY = hostSSIDY + i * (hostSSIDH + hostSSIDGap);
@@ -3253,6 +3368,7 @@ void handleHostSetupTouch(int x, int y) {
 }
 
 void handleHostIpTouch(int x, int y) {
+  // Host page 2: confirm/edit Host IP before starting softAP mode.
   for (int i = 0; i < 4; i++) {
     int fieldX = settingsFieldX + i * (settingsFieldW + settingsFieldGap);
 
@@ -3330,6 +3446,8 @@ void handleResultTouch(int x, int y) {
 }
 
 void handleTouch(int x, int y) {
+  // Central dispatcher. It should be the only place that decides which screen
+  // handler receives a touch.
   if (appState == STATE_HOME) {
     handleHomeTouch(x, y);
   } else if (appState == STATE_GAMES) {
@@ -3378,6 +3496,8 @@ void handleTouch(int x, int y) {
 // ============================================================================
 // SETUP / LOOP
 // ============================================================================
+// setup() initializes hardware/resources once. loop() keeps networking and touch
+// input responsive with short, non-blocking polling.
 void setup() {
   Serial.begin(115200);
   delay(1000);
