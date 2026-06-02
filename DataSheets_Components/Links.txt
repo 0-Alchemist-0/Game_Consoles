@@ -7,3 +7,12 @@ https://sourceforge.net/projects/lcd-image-converter/
 
 
 https://www.printables.com/model/553096-tp4056-usb-c-model-li-ion-charge-circuit-3d-model/files
+https://www.thingiverse.com/thing:1029881
+https://www.printables.com/model/87584-18650-battery-usb-charger-tp4056
+https://www.printables.com/model/1004227-lithium-battery-charger-li-ion-module-tp4056-usb-c/files
+https://www.printables.com/model/131214-18650-minimal-holder
+
+https://www.printables.com/model/59190-1s2p-18650-vase-mode-holder-with-tp4056-mt3608-boa
+https://www.printables.com/model/1009486-enclosure-for-arduino-nano-esp32
+
+Informatii USB-C https://electronics.stackexchange.com/questions/534304/finding-the-exterior-dimensions-of-a-usb-type-c-receptacle
