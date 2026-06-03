@@ -1,6 +1,10 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 4.8 - 2026-06-03 18:28 - Added an arcade background and marquee title
+// to the Games selection screen, reusing the neon button text style.
+// Version 4.7 - 2026-06-03 18:14 - Ported the arcade Tic Tac Toe menu artwork
+// and changed shared UI buttons to the same neon arcade style.
 // Version 4.6 - 2026-06-03 17:42 - Added Arduino Nano ESP32 board-label and
 // physical-header comments for each configured GPIO.
 // Version 4.5 - 2026-05-28 11:43 - Added explanatory comments across the main
@@ -117,8 +121,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 4.6";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V46-2026060317";
+const char *APP_VERSION_TEXT = "Version 4.8";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V48-2026060318";
 
 
 
@@ -325,25 +329,25 @@ const int boardY = 110;
 const int boardSize = 280;
 const int cellSize = boardSize / 3;
 
-const int btnLocalX = 60;
-const int btnLocalY = 185;
-const int btnLocalW = 200;
-const int btnLocalH = 45;
+const int btnLocalX = 30;
+const int btnLocalY = 150;
+const int btnLocalW = 260;
+const int btnLocalH = 54;
 
-const int btnHostX = 60;
-const int btnHostY = 245;
-const int btnHostW = 200;
-const int btnHostH = 45;
+const int btnHostX = 30;
+const int btnHostY = 210;
+const int btnHostW = 260;
+const int btnHostH = 54;
 
-const int btnJoinX = 60;
-const int btnJoinY = 305;
-const int btnJoinW = 200;
-const int btnJoinH = 45;
+const int btnJoinX = 30;
+const int btnJoinY = 270;
+const int btnJoinW = 260;
+const int btnJoinH = 54;
 
-const int btnResetScoreX = 60;
-const int btnResetScoreY = 365;
-const int btnResetScoreW = 200;
-const int btnResetScoreH = 45;
+const int btnResetScoreX = 30;
+const int btnResetScoreY = 330;
+const int btnResetScoreW = 260;
+const int btnResetScoreH = 54;
 
 const int btnMenuX = 90;
 const int btnMenuY = 420;
@@ -360,10 +364,10 @@ const int btnResultMenuY = 390;
 const int btnResultMenuW = 220;
 const int btnResultMenuH = 45;
 
-const int btnTttHomeX = 60;
-const int btnTttHomeY = 420;
-const int btnTttHomeW = 200;
-const int btnTttHomeH = 45;
+const int btnTttHomeX = 30;
+const int btnTttHomeY = 390;
+const int btnTttHomeW = 260;
+const int btnTttHomeH = 54;
 
 const int btnGamesX = 35;
 const int btnGamesTttY = 135;
@@ -934,22 +938,307 @@ void drawCenteredTextWithShadow(const char *txt, int y, int size, uint16_t color
   gfx->print(txt);
 }
 
+void drawPixelText(const char *txt, int x, int y, int size, uint16_t mainColor, uint16_t shadowColor) {
+  gfx->setTextSize(size);
+
+  gfx->setCursor(x + 3, y + 3);
+  gfx->setTextColor(shadowColor);
+  gfx->print(txt);
+
+  gfx->setCursor(x, y);
+  gfx->setTextColor(mainColor);
+  gfx->print(txt);
+}
+
+void drawNeonRect(int x, int y, int w, int h, uint16_t coreColor) {
+  uint16_t arcadeBlue = rgb888to565(0, 65, 210);
+  uint16_t arcadeOrange = rgb888to565(255, 128, 0);
+
+  gfx->drawRoundRect(x - 3, y - 3, w + 6, h + 6, 8, RGB565_CYAN);
+  gfx->drawRoundRect(x - 2, y - 2, w + 4, h + 4, 7, arcadeBlue);
+  gfx->drawRoundRect(x - 1, y - 1, w + 2, h + 2, 6, RGB565_WHITE);
+  gfx->drawRoundRect(x, y, w, h, 6, coreColor);
+
+  if (w > 8 && h > 8) {
+    gfx->drawRoundRect(x + 2, y + 2, w - 4, h - 4, 5, arcadeOrange);
+  }
+}
+
+void fillArcadeGradient() {
+  for (int y = 0; y < screenH; y++) {
+    uint8_t b = map(y, 0, screenH, 28, 4);
+    uint8_t r = map(y, 0, screenH, 8, 0);
+    uint8_t g = map(y, 0, screenH, 5, 0);
+
+    gfx->drawLine(0, y, screenW - 1, y, rgb888to565(r, g, b));
+  }
+}
+
+void drawArcadeStars() {
+  for (int i = 0; i < 100; i++) {
+    int x = (i * 47 + 23) % screenW;
+    int y = (i * 71 + 11) % 145;
+    uint16_t color;
+
+    switch (i % 5) {
+      case 0: color = RGB565_YELLOW; break;
+      case 1: color = RGB565_CYAN; break;
+      case 2: color = RGB565_RED; break;
+      case 3: color = rgb888to565(255, 0, 180); break;
+      default: color = RGB565_WHITE; break;
+    }
+
+    gfx->drawPixel(x, y, color);
+
+    if (i % 7 == 0) {
+      gfx->drawLine(x - 2, y, x + 2, y, color);
+      gfx->drawLine(x, y - 2, x, y + 2, color);
+    }
+  }
+}
+
+void drawArcadeCabinets() {
+  uint16_t cabinetFill = rgb888to565(18, 8, 42);
+  uint16_t arcadeBlue = rgb888to565(0, 65, 210);
+  uint16_t arcadeMagenta = rgb888to565(255, 0, 180);
+  uint16_t arcadeGreen = rgb888to565(0, 255, 90);
+
+  gfx->fillRect(0, 220, 35, 180, cabinetFill);
+  gfx->drawRect(0, 220, 35, 180, arcadeMagenta);
+  gfx->drawLine(35, 220, 55, 260, arcadeBlue);
+  gfx->drawLine(35, 400, 55, 440, arcadeBlue);
+  gfx->drawRect(6, 250, 22, 28, RGB565_CYAN);
+  gfx->setTextSize(1);
+  gfx->setTextColor(arcadeGreen);
+  gfx->setCursor(5, 285);
+  gfx->print("INSERT");
+  gfx->setCursor(8, 295);
+  gfx->print("COIN");
+
+  gfx->fillRect(285, 220, 35, 180, cabinetFill);
+  gfx->drawRect(285, 220, 35, 180, arcadeMagenta);
+  gfx->drawLine(285, 220, 265, 260, arcadeBlue);
+  gfx->drawLine(285, 400, 265, 440, arcadeBlue);
+  gfx->drawRect(292, 250, 22, 28, RGB565_CYAN);
+  gfx->setTextColor(arcadeGreen);
+  gfx->setCursor(291, 285);
+  gfx->print("1UP");
+  gfx->setCursor(289, 295);
+  gfx->print("HIGH");
+  gfx->setCursor(289, 305);
+  gfx->print("SCORE");
+}
+
+void drawArcadeFloor() {
+  int horizon = 365;
+  uint16_t floorLine = rgb888to565(45, 15, 90);
+  uint16_t rayLine = rgb888to565(30, 20, 85);
+
+  for (int y = horizon; y < screenH; y += 16) {
+    gfx->drawLine(0, y, screenW - 1, y, floorLine);
+  }
+
+  for (int x = -120; x < screenW + 120; x += 28) {
+    gfx->drawLine(screenW / 2, horizon, x, screenH - 1, rayLine);
+  }
+
+  gfx->drawLine(0, horizon, screenW - 1, horizon, rgb888to565(0, 65, 210));
+}
+
+void drawJoystickDecor() {
+  uint16_t arcadeOrange = rgb888to565(255, 128, 0);
+  uint16_t arcadeGray = rgb888to565(150, 150, 170);
+  uint16_t darkBase = rgb888to565(20, 20, 40);
+
+  gfx->fillCircle(32, 430, 12, RGB565_RED);
+  gfx->drawCircle(32, 430, 13, arcadeOrange);
+  gfx->drawLine(32, 442, 28, 465, arcadeGray);
+  gfx->drawLine(32, 442, 36, 465, arcadeGray);
+  gfx->fillRoundRect(10, 458, 44, 16, 8, darkBase);
+  gfx->drawRoundRect(10, 458, 44, 16, 8, RGB565_CYAN);
+
+  gfx->fillCircle(250, 438, 12, rgb888to565(0, 65, 210));
+  gfx->drawCircle(250, 438, 13, RGB565_CYAN);
+  gfx->fillCircle(285, 438, 12, arcadeOrange);
+  gfx->drawCircle(285, 438, 13, RGB565_YELLOW);
+
+  gfx->setTextSize(3);
+  gfx->setTextColor(RGB565_RED);
+  gfx->setCursor(72, 430);
+  gfx->print("X");
+
+  gfx->setTextColor(RGB565_CYAN);
+  gfx->setCursor(185, 430);
+  gfx->print("O");
+}
+
+void drawArcadeTitle() {
+  uint16_t signFill = rgb888to565(12, 12, 35);
+  uint16_t arcadeOrange = rgb888to565(255, 128, 0);
+  uint16_t arcadeBlue = rgb888to565(0, 65, 210);
+
+  gfx->fillRoundRect(13, 20, 294, 74, 10, signFill);
+  gfx->drawRoundRect(13, 20, 294, 74, 10, arcadeOrange);
+  gfx->drawRoundRect(17, 24, 286, 66, 8, RGB565_CYAN);
+  gfx->drawRoundRect(20, 27, 280, 60, 7, RGB565_YELLOW);
+
+  for (int x = 30; x < 292; x += 17) {
+    gfx->fillCircle(x, 31, 3, arcadeOrange);
+    gfx->drawCircle(x, 31, 4, RGB565_YELLOW);
+    gfx->fillCircle(x, 82, 3, arcadeOrange);
+    gfx->drawCircle(x, 82, 4, RGB565_YELLOW);
+  }
+
+  drawPixelText("TIC", 31, 42, 4, RGB565_RED, RGB565_YELLOW);
+  drawPixelText("TAC", 114, 42, 4, RGB565_YELLOW, RGB565_RED);
+  drawPixelText("TOE", 207, 42, 4, RGB565_CYAN, arcadeBlue);
+
+  gfx->setTextSize(3);
+  gfx->setTextColor(RGB565_YELLOW);
+  gfx->setCursor(145, 0);
+  gfx->print("*");
+
+  gfx->setTextSize(4);
+  gfx->setTextColor(RGB565_RED);
+  gfx->setCursor(85, 105);
+  gfx->print("X");
+
+  gfx->setTextColor(RGB565_CYAN);
+  gfx->setCursor(210, 105);
+  gfx->print("O");
+
+  int miniX = 132;
+  int miniY = 103;
+  int miniCell = 17;
+  const char *miniMarks = "XOXXOXOXO";
+
+  gfx->drawRect(miniX, miniY, miniCell * 3, miniCell * 3, RGB565_CYAN);
+  gfx->drawLine(miniX + miniCell, miniY, miniX + miniCell, miniY + miniCell * 3, RGB565_CYAN);
+  gfx->drawLine(miniX + miniCell * 2, miniY, miniX + miniCell * 2, miniY + miniCell * 3, RGB565_CYAN);
+  gfx->drawLine(miniX, miniY + miniCell, miniX + miniCell * 3, miniY + miniCell, RGB565_CYAN);
+  gfx->drawLine(miniX, miniY + miniCell * 2, miniX + miniCell * 3, miniY + miniCell * 2, RGB565_CYAN);
+
+  gfx->setTextSize(2);
+
+  for (int i = 0; i < 9; i++) {
+    int cellX = miniX + (i % 3) * miniCell + 3;
+    int cellY = miniY + (i / 3) * miniCell + 2;
+
+    gfx->setCursor(cellX, cellY);
+    gfx->setTextColor(miniMarks[i] == 'X' ? RGB565_RED : RGB565_CYAN);
+    gfx->print(miniMarks[i]);
+  }
+}
+
+void drawGamesArcadeTitle() {
+  uint16_t signFill = rgb888to565(12, 12, 35);
+  uint16_t arcadeOrange = rgb888to565(255, 128, 0);
+  uint16_t arcadeBlue = rgb888to565(0, 65, 210);
+  uint16_t arcadeMagenta = rgb888to565(255, 0, 180);
+
+  gfx->fillRoundRect(18, 18, 284, 82, 10, signFill);
+  gfx->drawRoundRect(18, 18, 284, 82, 10, arcadeMagenta);
+  gfx->drawRoundRect(22, 22, 276, 74, 8, RGB565_CYAN);
+  gfx->drawRoundRect(26, 26, 268, 66, 7, arcadeOrange);
+
+  for (int x = 36; x < 286; x += 18) {
+    gfx->fillCircle(x, 29, 3, arcadeOrange);
+    gfx->drawCircle(x, 29, 4, RGB565_YELLOW);
+    gfx->fillCircle(x, 89, 3, arcadeBlue);
+    gfx->drawCircle(x, 89, 4, RGB565_CYAN);
+  }
+
+  drawPixelText("GAMES", 100, 43, 4, RGB565_YELLOW, RGB565_RED);
+  drawPixelText("SELECT GAME", 70, 108, 2, RGB565_CYAN, arcadeBlue);
+
+  gfx->fillCircle(46, 114, 7, RGB565_RED);
+  gfx->drawCircle(46, 114, 8, RGB565_YELLOW);
+  gfx->fillCircle(274, 114, 7, arcadeBlue);
+  gfx->drawCircle(274, 114, 8, RGB565_CYAN);
+}
+
+void drawTicTacToeArcadeHome() {
+  fillArcadeGradient();
+  drawArcadeStars();
+  drawArcadeCabinets();
+  drawArcadeFloor();
+  drawJoystickDecor();
+  drawArcadeTitle();
+}
+
+void drawGamesArcadeBackground() {
+  fillArcadeGradient();
+  drawArcadeStars();
+  drawArcadeCabinets();
+  drawArcadeFloor();
+  drawGamesArcadeTitle();
+}
+
 void drawButton(int x, int y, int w, int h, uint16_t fillColor, uint16_t borderColor, uint16_t textColor, const char *label, int textSize) {
-  // Drawing and touch hitboxes share the same rectangle constants.
-  gfx->fillRoundRect(x, y, w, h, 10, fillColor);
-  gfx->drawRoundRect(x, y, w, h, 10, borderColor);
+  // Shared arcade button style. The original fill color still chooses the
+  // button mood, but all buttons use the same neon cabinet frame.
+  uint16_t darkFill = rgb888to565(0, 6, 20);
+  uint16_t coreColor = RGB565_CYAN;
+  uint16_t mainTextColor = RGB565_YELLOW;
+  uint16_t shadowTextColor = RGB565_RED;
+
+  if (fillColor == RGB565_RED) {
+    darkFill = rgb888to565(28, 0, 10);
+    coreColor = RGB565_RED;
+    mainTextColor = RGB565_YELLOW;
+    shadowTextColor = RGB565_RED;
+  } else if (fillColor == RGB565_GREEN) {
+    darkFill = rgb888to565(0, 24, 16);
+    coreColor = RGB565_GREEN;
+    mainTextColor = RGB565_YELLOW;
+    shadowTextColor = RGB565_RED;
+  } else if (fillColor == RGB565_BLACK) {
+    darkFill = RGB565_BLACK;
+    coreColor = borderColor;
+    mainTextColor = textColor;
+    shadowTextColor = rgb888to565(0, 65, 210);
+  } else {
+    darkFill = rgb888to565(0, 8, 30);
+    coreColor = RGB565_CYAN;
+    mainTextColor = RGB565_CYAN;
+    shadowTextColor = rgb888to565(0, 65, 210);
+  }
+
+  if (strcmp(label, "BACK") == 0 ||
+      strcmp(label, "MENU") == 0 ||
+      strcmp(label, "MENIU") == 0 ||
+      strcmp(label, "HOME") == 0) {
+    mainTextColor = RGB565_CYAN;
+    shadowTextColor = rgb888to565(0, 65, 210);
+  }
+
+  gfx->fillRoundRect(x, y, w, h, 7, darkFill);
+  drawNeonRect(x, y, w, h, coreColor);
 
   int16_t x1, y1;
   uint16_t tw, th;
+  int fittedSize = textSize;
 
-  gfx->setTextSize(textSize);
-  gfx->getTextBounds((char *)label, 0, 0, &x1, &y1, &tw, &th);
+  do {
+    gfx->setTextSize(fittedSize);
+    gfx->getTextBounds((char *)label, 0, 0, &x1, &y1, &tw, &th);
+
+    if (tw <= (uint16_t)(w - 8) || fittedSize <= 1) {
+      break;
+    }
+
+    fittedSize--;
+  } while (true);
 
   int tx = x + (w - tw) / 2;
   int ty = y + (h - th) / 2 + 2;
 
+  gfx->setCursor(tx + 2, ty + 2);
+  gfx->setTextColor(shadowTextColor);
+  gfx->print(label);
+
   gfx->setCursor(tx, ty);
-  gfx->setTextColor(textColor);
+  gfx->setTextColor(mainTextColor);
   gfx->print(label);
 }
 
@@ -1689,14 +1978,7 @@ void drawPocketTanksScene(int projectileX, int projectileY, bool showExplosion, 
 // appState. Touch behavior lives later in the touch routing section.
 void drawMenuScreen() {
   activeNetworkGame = NETWORK_GAME_TTT;
-  gfx->fillScreen(RGB565_BLACK);
-
-  drawCenteredText("TIC TAC TOE", 35, 3, RGB565_WHITE);
-  drawCenteredText("LOCAL / NETWORK", 75, 2, RGB565_CYAN);
-
-  char scoreLine[48];
-  snprintf(scoreLine, sizeof(scoreLine), "X:%d   O:%d   E:%d", scoreX, scoreO, scoreDraw);
-  drawCenteredText(scoreLine, 145, 2, RGB565_YELLOW);
+  drawTicTacToeArcadeHome();
 
   drawButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH,
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "LOCAL", 2);
@@ -1712,13 +1994,15 @@ void drawMenuScreen() {
 
   drawButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH,
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "BACK", 2);
+
+  char scoreLine[48];
+  snprintf(scoreLine, sizeof(scoreLine), "SCORE  X:%d  O:%d  D:%d", scoreX, scoreO, scoreDraw);
+  drawCenteredTextWithShadow(scoreLine, 462, 1, RGB565_WHITE, RGB565_BLACK);
 }
 
 void drawGamesScreen() {
   appState = STATE_GAMES;
-  gfx->fillScreen(RGB565_BLACK);
-
-  drawCenteredText("GAMES", 35, 3, RGB565_CYAN);
+  drawGamesArcadeBackground();
 
   drawButton(btnGamesX, btnGamesTttY, btnGamesW, btnGamesH,
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "TIC TAC TOE", 2);
@@ -1853,7 +2137,7 @@ void drawPocketTanksMenuScreen() {
 
   char scoreLine[48];
   snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d", ptScoreP1, ptScoreP2);
-  drawCenteredText(scoreLine, 145, 2, RGB565_YELLOW);
+  drawCenteredText(scoreLine, 120, 2, RGB565_YELLOW);
 
   drawButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH,
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "LOCAL", 2);
