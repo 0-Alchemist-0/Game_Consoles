@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 4.6 - 2026-06-03 17:42 - Added Arduino Nano ESP32 board-label and
+// physical-header comments for each configured GPIO.
 // Version 4.5 - 2026-05-28 11:43 - Added explanatory comments across the main
 // source blocks to make hardware, UI, networking, and game logic easier to read.
 // Version 4.4 - 2026-05-27 17:28 - Added randomized Pocket Tanks terrain
@@ -90,31 +92,33 @@
 // ============================================================================
 // Board wiring for Arduino Nano ESP32 + ILI9488 display, FT6336 touch,
 // microSD card, and buzzer. Keep these values aligned with the physical wiring.
-static const int PIN_LCD_CS   = 21;
-static const int PIN_LCD_DC   = 18;
-static const int PIN_LCD_RST  = 17;
+// The sketch uses ESP32 GPIO numbering. Comments also show the Arduino Nano
+// ESP32 board label and physical header position.
+static const int PIN_LCD_CS   = 21;  // GPIO21, Arduino D10, physical header JP2-3.
+static const int PIN_LCD_DC   = 18;  // GPIO18, Arduino D9, physical header JP2-4.
+static const int PIN_LCD_RST  = 17;  // GPIO17, Arduino D8, physical header JP2-5.
 
-static const int PIN_LCD_MOSI = 38;
-static const int PIN_LCD_MISO = 47;
-static const int PIN_LCD_SCLK = 48;
+static const int PIN_LCD_MOSI = 38;  // GPIO38, Arduino D11/MOSI, physical header JP2-2.
+static const int PIN_LCD_MISO = 47;  // GPIO47, Arduino D12/MISO, physical header JP2-1.
+static const int PIN_LCD_SCLK = 48;  // GPIO48, Arduino D13/SCK, physical header JP1-1.
 
-static const int PIN_SD_CS    = 8;
+static const int PIN_SD_CS    = 8;   // GPIO8, Arduino D5, physical header JP2-8.
 static const int SD_SPI_FREQ  = 49000000;
 
-static const int PIN_TP_INT   = 6;
-static const int PIN_TP_RST   = 7;
+static const int PIN_TP_INT   = 6;   // GPIO6, Arduino D3, physical header JP2-10.
+static const int PIN_TP_RST   = 7;   // GPIO7, Arduino D4, physical header JP2-9.
 
-static const int PIN_SDA      = 11;
-static const int PIN_SCL      = 12;
+static const int PIN_SDA      = 11;  // GPIO11, Arduino A4/SDA, physical header JP1-8.
+static const int PIN_SCL      = 12;  // GPIO12, Arduino A5/SCL, physical header JP1-9.
 
-static const int PIN_BUZZER   = 4;
+static const int PIN_BUZZER   = 4;   // GPIO4, Arduino A3, physical header JP1-7.
 
 static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 4.5";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V45-2026052811";
+const char *APP_VERSION_TEXT = "Version 4.6";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V46-2026060317";
 
 
 
