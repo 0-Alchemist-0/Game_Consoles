@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 5.3 - 2026-06-03 22:20 - Added SD-loaded Rock-Paper-Scissors menu
+// background support from /RPSLS_game/main_screen/rock_paper_scissors_background.raw.
 // Version 5.2 - 2026-06-03 22:11 - Ported the Rock-Paper-Scissors arcade menu
 // background and switched its menu to the transparent arcade text buttons.
 // Version 5.1 - 2026-06-03 21:35 - Changed Games and Tic Tac Toe menu buttons
@@ -129,8 +131,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 5.2";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V52-2026060322";
+const char *APP_VERSION_TEXT = "Version 5.3";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V53-2026060322";
 
 
 
@@ -568,6 +570,7 @@ static const int INTRO_ROTATION = 0;
 static const unsigned long INTRO_FIRST_FRAME_HOLD_MS = 1000;
 static const char *GAMES_BACKGROUND_PATH = "/games_screen/games_background.raw";
 static const char *TTT_BACKGROUND_PATH = "/tictactoe_game/tictactoe_background.raw";
+static const char *RPS_BACKGROUND_PATH = "/RPSLS_game/main_screen/rock_paper_scissors_background.raw";
 
 static uint16_t rawDrawBuffer[VIDEO_W * RAW_BLOCK_LINES];
 static uint16_t rawScaleSourceBuffer[homeButtonRawW * homeButtonRawH];
@@ -1428,6 +1431,12 @@ void drawRpsBottomRail() {
 }
 
 void drawRpsArcadeHome() {
+  if (sdReady && SD.exists(RPS_BACKGROUND_PATH)) {
+    if (drawRaw565ImageFromSD(RPS_BACKGROUND_PATH, 0, 0, screenW, screenH)) {
+      return;
+    }
+  }
+
   drawRpsHomeGradientBackground();
   drawRpsHomeStars();
   drawRpsBackWall();
