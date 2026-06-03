@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 5.1 - 2026-06-03 21:35 - Changed Games and Tic Tac Toe menu buttons
+// to transparent arcade text buttons with consistent two-color lettering.
 // Version 5.0 - 2026-06-03 21:30 - Added SD-loaded Tic Tac Toe menu background
 // support from /tictactoe_game/tictactoe_background.raw with generated fallback.
 // Version 4.9 - 2026-06-03 21:25 - Added SD-loaded Games screen background
@@ -125,8 +127,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 5.0";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V50-2026060321";
+const char *APP_VERSION_TEXT = "Version 5.1";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V51-2026060321";
 
 
 
@@ -1192,6 +1194,42 @@ void drawGamesArcadeBackground() {
   drawGamesArcadeTitle();
 }
 
+void drawTransparentArcadeButton(int x, int y, int w, int h, const char *label, int textSize) {
+  uint16_t mainTextColor = RGB565_YELLOW;
+  uint16_t secondTextColor = RGB565_RED;
+
+  if (strcmp(label, "BACK") == 0 || strcmp(label, "HOME") == 0) {
+    mainTextColor = RGB565_CYAN;
+    secondTextColor = RGB565_YELLOW;
+  }
+
+  int16_t x1, y1;
+  uint16_t tw, th;
+  int fittedSize = textSize;
+
+  do {
+    gfx->setTextSize(fittedSize);
+    gfx->getTextBounds((char *)label, 0, 0, &x1, &y1, &tw, &th);
+
+    if (tw <= (uint16_t)(w - 8) || fittedSize <= 1) {
+      break;
+    }
+
+    fittedSize--;
+  } while (true);
+
+  int tx = x + (w - tw) / 2;
+  int ty = y + (h - th) / 2 + 2;
+
+  gfx->setCursor(tx + 2, ty + 2);
+  gfx->setTextColor(secondTextColor);
+  gfx->print(label);
+
+  gfx->setCursor(tx, ty);
+  gfx->setTextColor(mainTextColor);
+  gfx->print(label);
+}
+
 void drawButton(int x, int y, int w, int h, uint16_t fillColor, uint16_t borderColor, uint16_t textColor, const char *label, int textSize) {
   // Shared arcade button style. The original fill color still chooses the
   // button mood, but all buttons use the same neon cabinet frame.
@@ -1998,20 +2036,15 @@ void drawMenuScreen() {
   activeNetworkGame = NETWORK_GAME_TTT;
   drawTicTacToeArcadeHome();
 
-  drawButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH,
-             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "LOCAL", 2);
+  drawTransparentArcadeButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH, "LOCAL", 2);
 
-  drawButton(btnHostX, btnHostY, btnHostW, btnHostH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "HOST - X", 2);
+  drawTransparentArcadeButton(btnHostX, btnHostY, btnHostW, btnHostH, "HOST - X", 2);
 
-  drawButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "JOIN - O", 2);
+  drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN - O", 2);
 
-  drawButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH,
-             RGB565_RED, RGB565_WHITE, RGB565_WHITE, "RESET SCOR", 2);
+  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCOR", 2);
 
-  drawButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH,
-             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "BACK", 2);
+  drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
 
   char scoreLine[48];
   snprintf(scoreLine, sizeof(scoreLine), "SCORE  X:%d  O:%d  D:%d", scoreX, scoreO, scoreDraw);
@@ -2022,17 +2055,13 @@ void drawGamesScreen() {
   appState = STATE_GAMES;
   drawGamesArcadeBackground();
 
-  drawButton(btnGamesX, btnGamesTttY, btnGamesW, btnGamesH,
-             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "TIC TAC TOE", 2);
+  drawTransparentArcadeButton(btnGamesX, btnGamesTttY, btnGamesW, btnGamesH, "TIC TAC TOE", 2);
 
-  drawButton(btnGamesX, btnGamesRpsY, btnGamesW, btnGamesH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "ROCK-PAPER-SCISSORS", 2);
+  drawTransparentArcadeButton(btnGamesX, btnGamesRpsY, btnGamesW, btnGamesH, "ROCK-PAPER-SCISSORS", 2);
 
-  drawButton(btnGamesX, btnGamesPocketTanksY, btnGamesW, btnGamesH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "POCKET TANKS", 2);
+  drawTransparentArcadeButton(btnGamesX, btnGamesPocketTanksY, btnGamesW, btnGamesH, "POCKET TANKS", 2);
 
-  drawButton(btnGamesX, btnGamesHomeY, btnGamesW, btnGamesHomeH,
-             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "HOME", 2);
+  drawTransparentArcadeButton(btnGamesX, btnGamesHomeY, btnGamesW, btnGamesHomeH, "HOME", 2);
 }
 
 void drawRpsMenuScreen() {
