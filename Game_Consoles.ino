@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 5.0 - 2026-06-03 21:30 - Added SD-loaded Tic Tac Toe menu background
+// support from /tictactoe_game/tictactoe_background.raw with generated fallback.
 // Version 4.9 - 2026-06-03 21:25 - Added SD-loaded Games screen background
 // support from /games_screen/games_background.raw with generated fallback.
 // Version 4.8 - 2026-06-03 18:28 - Added an arcade background and marquee title
@@ -123,8 +125,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 4.9";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V49-2026060321";
+const char *APP_VERSION_TEXT = "Version 5.0";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V50-2026060321";
 
 
 
@@ -561,6 +563,7 @@ static const int INTRO_TARGET_FPS = 65;
 static const int INTRO_ROTATION = 0;
 static const unsigned long INTRO_FIRST_FRAME_HOLD_MS = 1000;
 static const char *GAMES_BACKGROUND_PATH = "/games_screen/games_background.raw";
+static const char *TTT_BACKGROUND_PATH = "/tictactoe_game/tictactoe_background.raw";
 
 static uint16_t rawDrawBuffer[VIDEO_W * RAW_BLOCK_LINES];
 static uint16_t rawScaleSourceBuffer[homeButtonRawW * homeButtonRawH];
@@ -1161,6 +1164,12 @@ void drawGamesArcadeTitle() {
 }
 
 void drawTicTacToeArcadeHome() {
+  if (sdReady && SD.exists(TTT_BACKGROUND_PATH)) {
+    if (drawRaw565ImageFromSD(TTT_BACKGROUND_PATH, 0, 0, screenW, screenH)) {
+      return;
+    }
+  }
+
   fillArcadeGradient();
   drawArcadeStars();
   drawArcadeCabinets();
