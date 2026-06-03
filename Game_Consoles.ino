@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 5.2 - 2026-06-03 22:11 - Ported the Rock-Paper-Scissors arcade menu
+// background and switched its menu to the transparent arcade text buttons.
 // Version 5.1 - 2026-06-03 21:35 - Changed Games and Tic Tac Toe menu buttons
 // to transparent arcade text buttons with consistent two-color lettering.
 // Version 5.0 - 2026-06-03 21:30 - Added SD-loaded Tic Tac Toe menu background
@@ -127,8 +129,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 5.1";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V51-2026060321";
+const char *APP_VERSION_TEXT = "Version 5.2";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V52-2026060322";
 
 
 
@@ -1194,6 +1196,251 @@ void drawGamesArcadeBackground() {
   drawGamesArcadeTitle();
 }
 
+void drawRpsHomeGradientBackground() {
+  for (int y = 0; y < screenH; y++) {
+    uint8_t r = map(y, 0, screenH, 5, 0);
+    uint8_t g = map(y, 0, screenH, 6, 0);
+    uint8_t b = map(y, 0, screenH, 45, 8);
+
+    gfx->drawLine(0, y, screenW - 1, y, rgb888to565(r, g, b));
+  }
+}
+
+void drawRpsHomeStars() {
+  for (int i = 0; i < 130; i++) {
+    int x = (i * 41 + 19) % screenW;
+    int y = (i * 67 + 11) % screenH;
+    uint16_t color;
+
+    switch (i % 6) {
+      case 0: color = RGB565_CYAN; break;
+      case 1: color = rgb888to565(255, 0, 180); break;
+      case 2: color = RGB565_YELLOW; break;
+      case 3: color = RGB565_RED; break;
+      case 4: color = RGB565_GREEN; break;
+      default: color = RGB565_BLUE; break;
+    }
+
+    gfx->drawPixel(x, y, color);
+
+    if (i % 13 == 0) {
+      gfx->drawLine(x - 3, y, x + 3, y, color);
+      gfx->drawLine(x, y - 3, x, y + 3, color);
+    }
+
+    if (i % 29 == 0) {
+      gfx->fillRect(x, y, 3, 3, color);
+    }
+  }
+}
+
+void drawRpsBackWall() {
+  for (int y = 120; y < 260; y += 14) {
+    gfx->drawLine(42, y, 277, y, rgb888to565(10, 10, 42));
+  }
+
+  for (int y = 128; y < 260; y += 28) {
+    for (int x = 50; x < 275; x += 34) {
+      gfx->drawLine(x, y, x, y + 14, rgb888to565(8, 8, 35));
+    }
+  }
+
+  gfx->drawLine(35, 263, 285, 263, rgb888to565(15, 25, 80));
+  gfx->drawLine(35, 265, 285, 265, RGB565_BLUE);
+}
+
+void drawRpsHomeFloor() {
+  int horizon = 270;
+  int centerX = screenW / 2;
+
+  for (int y = horizon; y < screenH; y++) {
+    uint8_t b = map(y, horizon, screenH, 30, 5);
+    gfx->drawLine(0, y, screenW - 1, y, rgb888to565(0, 3, b));
+  }
+
+  for (int y = horizon; y < screenH; y += 17) {
+    gfx->drawLine(0, y, screenW - 1, y, rgb888to565(20, 20, 90));
+  }
+
+  for (int x = -130; x < screenW + 130; x += 27) {
+    gfx->drawLine(centerX, horizon, x, screenH - 1, rgb888to565(20, 15, 85));
+  }
+
+  for (int i = 0; i < 28; i++) {
+    int x = (i * 37 + 7) % screenW;
+    int y = 285 + (i * 31) % 170;
+    uint16_t color = (i % 3 == 0) ? rgb888to565(255, 0, 180) :
+                     (i % 3 == 1) ? RGB565_CYAN : RGB565_BLUE;
+
+    gfx->drawLine(x, y, x + 16 + (i % 5) * 6, y, color);
+  }
+
+  for (int y = 286; y < 410; y += 6) {
+    gfx->drawLine(150, y, 170, y, rgb888to565(0, 30, 110));
+    gfx->drawLine(156, y, 164, y, RGB565_CYAN);
+  }
+}
+
+void drawRpsLeftCabinet() {
+  int x = 0;
+  int y = 132;
+  uint16_t magenta = rgb888to565(255, 0, 180);
+  uint16_t orange = rgb888to565(255, 128, 0);
+  uint16_t gray = rgb888to565(150, 150, 170);
+
+  gfx->fillRoundRect(x, y, 42, 150, 4, rgb888to565(5, 5, 24));
+  gfx->drawRoundRect(x, y, 42, 150, 4, magenta);
+  gfx->drawLine(42, y, 58, y + 32, RGB565_BLUE);
+  gfx->drawLine(42, y + 150, 58, y + 118, RGB565_BLUE);
+  gfx->fillRect(7, y + 24, 28, 38, rgb888to565(0, 8, 40));
+  gfx->drawRect(7, y + 24, 28, 38, RGB565_CYAN);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(magenta);
+  gfx->setCursor(6, y + 6);
+  gfx->print("INSERT");
+  gfx->setCursor(10, y + 17);
+  gfx->print("COIN");
+
+  gfx->drawLine(11, y + 55, 30, y + 36, RGB565_GREEN);
+  gfx->fillCircle(21, y + 83, 5, RGB565_RED);
+  gfx->drawLine(21, y + 88, 21, y + 103, gray);
+  gfx->fillCircle(14, y + 112, 3, RGB565_RED);
+  gfx->fillCircle(25, y + 113, 3, orange);
+  gfx->fillRect(10, y + 128, 22, 16, rgb888to565(2, 3, 18));
+  gfx->drawRect(10, y + 128, 22, 16, RGB565_BLUE);
+}
+
+void drawRpsRightCabinet() {
+  int x = 278;
+  int y = 132;
+  uint16_t magenta = rgb888to565(255, 0, 180);
+  uint16_t orange = rgb888to565(255, 128, 0);
+  uint16_t gray = rgb888to565(150, 150, 170);
+
+  gfx->fillRoundRect(x, y, 42, 150, 4, rgb888to565(5, 5, 24));
+  gfx->drawRoundRect(x, y, 42, 150, 4, RGB565_BLUE);
+  gfx->drawLine(x, y, x - 16, y + 32, magenta);
+  gfx->drawLine(x, y + 150, x - 16, y + 118, magenta);
+  gfx->fillRect(x + 7, y + 24, 28, 38, rgb888to565(0, 8, 40));
+  gfx->drawRect(x + 7, y + 24, 28, 38, RGB565_CYAN);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(magenta);
+  gfx->setCursor(x + 8, y + 6);
+  gfx->print("HIGH");
+  gfx->setCursor(x + 6, y + 17);
+  gfx->print("SCORE");
+  gfx->setCursor(x + 10, y + 28);
+  gfx->print("1984");
+
+  gfx->fillTriangle(x + 22, y + 39, x + 15, y + 58, x + 29, y + 58, RGB565_RED);
+  gfx->fillRect(x + 18, y + 54, 8, 7, RGB565_WHITE);
+  gfx->fillCircle(x + 22, y + 83, 5, RGB565_RED);
+  gfx->drawLine(x + 22, y + 88, x + 22, y + 103, gray);
+  gfx->fillCircle(x + 14, y + 112, 3, RGB565_BLUE);
+  gfx->fillCircle(x + 28, y + 113, 3, RGB565_YELLOW);
+  gfx->fillRect(x + 10, y + 128, 22, 16, rgb888to565(2, 3, 18));
+  gfx->drawRect(x + 10, y + 128, 22, 16, RGB565_BLUE);
+}
+
+void drawRpsSideDecorations() {
+  uint16_t magenta = rgb888to565(255, 0, 180);
+
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_CYAN);
+  gfx->setCursor(10, 58);
+  gfx->print("*");
+  gfx->setTextColor(magenta);
+  gfx->setCursor(286, 70);
+  gfx->print("<3");
+  gfx->setTextColor(RGB565_YELLOW);
+  gfx->setCursor(270, 22);
+  gfx->print("*");
+  gfx->setTextColor(RGB565_CYAN);
+  gfx->setCursor(36, 18);
+  gfx->print("*");
+}
+
+void drawRpsOuterTitleFrame(int x, int y, int w, int h) {
+  uint16_t magenta = rgb888to565(255, 0, 180);
+
+  gfx->fillRoundRect(x, y, w, h, 12, rgb888to565(3, 2, 25));
+  gfx->drawRoundRect(x - 5, y - 5, w + 10, h + 10, 13, magenta);
+  gfx->drawRoundRect(x - 3, y - 3, w + 6, h + 6, 12, magenta);
+  gfx->drawRoundRect(x - 1, y - 1, w + 2, h + 2, 11, magenta);
+  gfx->drawRoundRect(x + 6, y + 6, w - 12, h - 12, 10, RGB565_CYAN);
+  gfx->drawRoundRect(x + 9, y + 9, w - 18, h - 18, 8, RGB565_BLUE);
+  gfx->fillRect(x + 5, y + 52, 12, 42, rgb888to565(0, 0, 20));
+  gfx->fillRect(x + w - 17, y + 52, 12, 42, rgb888to565(0, 0, 20));
+  gfx->drawLine(x + 28, y + h - 14, x + w - 28, y + h - 14, magenta);
+}
+
+void drawRpsTitleSign() {
+  int x = 42;
+  int y = 18;
+  int w = 236;
+  int h = 122;
+  uint16_t magenta = rgb888to565(255, 0, 180);
+  uint16_t orange = rgb888to565(255, 128, 0);
+  uint16_t gray = rgb888to565(150, 150, 170);
+
+  drawRpsOuterTitleFrame(x, y, w, h);
+  drawPixelText("ROCK", 91, 32, 4, gray, RGB565_BLACK);
+  drawPixelText("PAPER", 64, 64, 4, RGB565_WHITE, RGB565_BLUE);
+  drawPixelText("SCISSORS", 46, 96, 3, RGB565_CYAN, RGB565_BLUE);
+
+  gfx->fillRoundRect(87, 133, 146, 25, 6, rgb888to565(4, 2, 12));
+  gfx->drawRoundRect(87, 133, 146, 25, 6, magenta);
+  gfx->drawRoundRect(90, 136, 140, 19, 5, RGB565_BLUE);
+
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_GREEN);
+  gfx->setCursor(102, 139);
+  gfx->print("LIZARD");
+  gfx->setTextColor(orange);
+  gfx->setCursor(178, 139);
+  gfx->print("SPOCK");
+}
+
+void drawRpsBottomRail() {
+  uint16_t magenta = rgb888to565(255, 0, 180);
+  uint16_t orange = rgb888to565(255, 128, 0);
+  uint16_t gray = rgb888to565(150, 150, 170);
+
+  gfx->fillRect(0, 410, screenW, 70, rgb888to565(3, 4, 16));
+  gfx->drawLine(0, 410, screenW - 1, 410, magenta);
+  gfx->drawLine(0, 413, screenW - 1, 413, RGB565_BLUE);
+
+  gfx->drawLine(45, 430, 45, 462, gray);
+  gfx->drawLine(46, 430, 46, 462, RGB565_WHITE);
+  gfx->fillCircle(45, 426, 14, RGB565_RED);
+  gfx->drawCircle(45, 426, 15, orange);
+  gfx->fillCircle(40, 420, 3, RGB565_WHITE);
+  gfx->fillRoundRect(17, 456, 56, 18, 9, rgb888to565(5, 7, 22));
+  gfx->drawRoundRect(17, 456, 56, 18, 9, RGB565_BLUE);
+  gfx->drawRoundRect(25, 459, 40, 12, 6, magenta);
+
+  gfx->fillCircle(252, 452, 12, magenta);
+  gfx->drawCircle(252, 452, 13, RGB565_WHITE);
+  gfx->fillCircle(286, 452, 12, RGB565_BLUE);
+  gfx->drawCircle(286, 452, 13, RGB565_CYAN);
+}
+
+void drawRpsArcadeHome() {
+  drawRpsHomeGradientBackground();
+  drawRpsHomeStars();
+  drawRpsBackWall();
+  drawRpsHomeFloor();
+  drawRpsLeftCabinet();
+  drawRpsRightCabinet();
+  drawRpsSideDecorations();
+  drawRpsTitleSign();
+  drawRpsBottomRail();
+  gfx->drawRoundRect(2, 2, screenW - 4, screenH - 4, 10, rgb888to565(10, 20, 80));
+  gfx->drawRoundRect(5, 5, screenW - 10, screenH - 10, 8, rgb888to565(30, 0, 70));
+}
+
 void drawTransparentArcadeButton(int x, int y, int w, int h, const char *label, int textSize) {
   uint16_t mainTextColor = RGB565_YELLOW;
   uint16_t secondTextColor = RGB565_RED;
@@ -2068,29 +2315,21 @@ void drawRpsMenuScreen() {
   activeNetworkGame = NETWORK_GAME_RPS;
   localGame = false;
   appState = STATE_ROCK_PAPER_SCISSORS;
-  gfx->fillScreen(RGB565_BLACK);
+  drawRpsArcadeHome();
 
-  drawCenteredText("ROCK PAPER", 28, 2, RGB565_WHITE);
-  drawCenteredText("SCISSORS LIZARD SPOCK", 58, 2, RGB565_CYAN);
+  drawTransparentArcadeButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH, "LOCAL", 2);
+
+  drawTransparentArcadeButton(btnHostX, btnHostY, btnHostW, btnHostH, "HOST - P1", 2);
+
+  drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN - P2", 2);
+
+  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCOR", 2);
+
+  drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
 
   char scoreLine[48];
-  snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d   E:%d", rpsScoreP1, rpsScoreP2, rpsScoreDraw);
-  drawCenteredText(scoreLine, 125, 2, RGB565_YELLOW);
-
-  drawButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH,
-             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "LOCAL", 2);
-
-  drawButton(btnHostX, btnHostY, btnHostW, btnHostH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "HOST - P1", 2);
-
-  drawButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "JOIN - P2", 2);
-
-  drawButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH,
-             RGB565_RED, RGB565_WHITE, RGB565_WHITE, "RESET SCOR", 2);
-
-  drawButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH,
-             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "BACK", 2);
+  snprintf(scoreLine, sizeof(scoreLine), "SCORE  P1:%d  P2:%d  D:%d", rpsScoreP1, rpsScoreP2, rpsScoreDraw);
+  drawCenteredTextWithShadow(scoreLine, 462, 1, RGB565_WHITE, RGB565_BLACK);
 }
 
 void drawRpsChoiceScreen(int playerNumber) {
