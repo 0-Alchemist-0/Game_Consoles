@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 5.4 - 2026-06-16 22:19 - Renamed user-facing artillery game text to
+// Tanks Wars across menus, placeholders, and screen titles.
 // Version 5.3 - 2026-06-03 22:20 - Added SD-loaded Rock-Paper-Scissors menu
 // background support from /RPSLS_game/main_screen/rock_paper_scissors_background.raw.
 // Version 5.2 - 2026-06-03 22:11 - Ported the Rock-Paper-Scissors arcade menu
@@ -19,13 +21,13 @@
 // physical-header comments for each configured GPIO.
 // Version 4.5 - 2026-05-28 11:43 - Added explanatory comments across the main
 // source blocks to make hardware, UI, networking, and game logic easier to read.
-// Version 4.4 - 2026-05-27 17:28 - Added randomized Pocket Tanks terrain
+// Version 4.4 - 2026-05-27 17:28 - Added randomized Tanks Wars terrain
 // generation for each new local round.
-// Version 4.3 - 2026-05-27 17:24 - Removed Pocket Tanks full-screen redraws
+// Version 4.3 - 2026-05-27 17:24 - Removed Tanks Wars full-screen redraws
 // from angle and power controls to reduce UI flicker.
-// Version 4.2 - 2026-05-27 17:16 - Smoothed Pocket Tanks projectile animation
+// Version 4.2 - 2026-05-27 17:16 - Smoothed Tanks Wars projectile animation
 // by redrawing only the projectile area with a fixed frame time.
-// Version 4.1 - 2026-05-27 16:59 - Replaced Battleship with a Pocket Tanks
+// Version 4.1 - 2026-05-27 16:59 - Replaced Battleship with a Tanks Wars
 // menu and added first local artillery gameplay with destructible terrain.
 // Version 4.0 - 2026-05-27 15:32 - Added viewpoint-specific RPSLS network
 // result images from /RPSLS_game/win and /RPSLS_game/lose.
@@ -131,8 +133,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 5.3";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V53-2026060322";
+const char *APP_VERSION_TEXT = "Version 5.4";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V54-2026061622";
 
 
 
@@ -305,7 +307,7 @@ int rpsScoreP2 = 0;
 int rpsScoreDraw = 0;
 const char *rpsPlaceholderTitle = "RPS";
 
-// Pocket Tanks keeps one terrain height per screen column. Tanks sit on this
+// Tanks Wars keeps one terrain height per screen column. Tanks sit on this
 // height map, and explosions modify it directly.
 static const int PT_TERRAIN_W = 320;
 int ptTerrain[PT_TERRAIN_W];
@@ -316,7 +318,7 @@ int ptPower[2] = {62, 62};
 int ptScoreP1 = 0;
 int ptScoreP2 = 0;
 int ptWinner = 0;
-const char *ptPlaceholderTitle = "POCKET TANKS";
+const char *ptPlaceholderTitle = "Tanks Wars";
 
 // Touch edge detection and debounce. Touch actions fire once per press, not on
 // every loop while the finger is still down.
@@ -1966,7 +1968,7 @@ bool drawRpsWinningImage() {
 // ============================================================================
 // GAME DRAWING
 // ============================================================================
-// Rendering helpers for Tic Tac Toe, RPSLS, and Pocket Tanks gameplay.
+// Rendering helpers for Tic Tac Toe, RPSLS, and Tanks Wars gameplay.
 void drawX(int cx, int cy) {
   int margin = 20;
 
@@ -2315,7 +2317,7 @@ void drawGamesScreen() {
 
   drawTransparentArcadeButton(btnGamesX, btnGamesRpsY, btnGamesW, btnGamesH, "ROCK-PAPER-SCISSORS", 2);
 
-  drawTransparentArcadeButton(btnGamesX, btnGamesPocketTanksY, btnGamesW, btnGamesH, "POCKET TANKS", 2);
+  drawTransparentArcadeButton(btnGamesX, btnGamesPocketTanksY, btnGamesW, btnGamesH, "Tanks Wars", 2);
 
   drawTransparentArcadeButton(btnGamesX, btnGamesHomeY, btnGamesW, btnGamesHomeH, "HOME", 2);
 }
@@ -2427,7 +2429,7 @@ void drawPocketTanksMenuScreen() {
   appState = STATE_POCKET_TANKS;
   gfx->fillScreen(RGB565_BLACK);
 
-  drawCenteredText("POCKET TANKS", 35, 3, RGB565_WHITE);
+  drawCenteredText("Tanks Wars", 35, 3, RGB565_WHITE);
   drawCenteredText("LOCAL ARTILLERY", 75, 2, RGB565_CYAN);
 
   char scoreLine[48];
@@ -2459,7 +2461,7 @@ void drawPocketTanksResultScreen() {
   appState = STATE_PT_RESULT;
   gfx->fillScreen(RGB565_BLACK);
 
-  drawCenteredText("POCKET TANKS", 38, 3, RGB565_WHITE);
+  drawCenteredText("Tanks Wars", 38, 3, RGB565_WHITE);
 
   if (ptWinner == 1) {
     drawCenteredText("PLAYER 1 WINS", 130, 3, RGB565_RED);
@@ -3522,13 +3524,13 @@ void handlePocketTanksMenuTouch(int x, int y) {
 
   if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
     beepClick();
-    drawPocketTanksPlaceholderScreen("POCKET TANKS HOST");
+    drawPocketTanksPlaceholderScreen("Tanks Wars Host");
     return;
   }
 
   if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
     beepClick();
-    drawPocketTanksPlaceholderScreen("POCKET TANKS JOIN");
+    drawPocketTanksPlaceholderScreen("Tanks Wars Join");
     return;
   }
 
@@ -3555,7 +3557,7 @@ void handlePocketTanksPlaceholderTouch(int x, int y) {
 }
 
 void handlePocketTanksPlayingTouch(int x, int y) {
-  // Pocket Tanks controls are button-only for now: angle, power, fire, menu.
+  // Tanks Wars controls are button-only for now: angle, power, fire, menu.
   if (inRect(x, y, btnPtAngleDownX, btnPtAngleDownY, btnPtControlW, btnPtControlH)) {
     beepClick();
     adjustPocketTanksAngle(-5);
