@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 5.6 - 2026-06-17 19:30 - Added Host/Join network gameplay for Tanks
+// Wars with synced terrain seed, controls, turns, and firing.
 // Version 5.5 - 2026-06-17 19:24 - Added a generated arcade HOME fallback
 // screen when SD home assets are missing.
 // Version 5.4 - 2026-06-16 22:19 - Renamed user-facing artillery game text to
@@ -135,8 +137,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 5.5";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V55-2026061719";
+const char *APP_VERSION_TEXT = "Version 5.6";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V56-2026061719";
 
 
 
@@ -250,7 +252,8 @@ AppState appState = STATE_HOME;
 // the connection code which game should start after Host/Join connects.
 enum NetworkGameType {
   NETWORK_GAME_TTT,
-  NETWORK_GAME_RPS
+  NETWORK_GAME_RPS,
+  NETWORK_GAME_PT
 };
 
 NetworkGameType activeNetworkGame = NETWORK_GAME_TTT;
@@ -320,6 +323,7 @@ int ptPower[2] = {62, 62};
 int ptScoreP1 = 0;
 int ptScoreP2 = 0;
 int ptWinner = 0;
+unsigned long ptNetworkSeed = 1;
 const char *ptPlaceholderTitle = "Tanks Wars";
 
 // Touch edge detection and debounce. Touch actions fire once per press, not on
@@ -2148,8 +2152,14 @@ void drawPocketTanksHeader() {
   drawCenteredText(scoreLine, 8, 1, RGB565_WHITE);
 
   char turnLine[32];
-  snprintf(turnLine, sizeof(turnLine), "PLAYER %d TURN", ptCurrentPlayer + 1);
-  drawCenteredText(turnLine, 26, 2, (ptCurrentPlayer == 0) ? RGB565_RED : RGB565_CYAN);
+
+  if (!localGame && activeNetworkGame == NETWORK_GAME_PT) {
+    snprintf(turnLine, sizeof(turnLine), myTurn ? "YOUR TURN P%d" : "WAIT P%d", ptCurrentPlayer + 1);
+  } else {
+    snprintf(turnLine, sizeof(turnLine), "PLAYER %d TURN", ptCurrentPlayer + 1);
+  }
+
+  drawCenteredText(turnLine, 26, 2, (localGame || myTurn) ? RGB565_GREEN : RGB565_YELLOW);
 }
 
 void drawPocketTanksTerrain() {
@@ -2279,8 +2289,14 @@ void drawPocketTanksControls() {
   gfx->drawLine(0, ptFieldBottom, screenW, ptFieldBottom, RGB565_WHITE);
 
   char line[64];
-  snprintf(line, sizeof(line), "P%d  Angle:%d  Power:%d",
-           ptCurrentPlayer + 1, ptAngle[ptCurrentPlayer], ptPower[ptCurrentPlayer]);
+  if (!localGame && activeNetworkGame == NETWORK_GAME_PT && !myTurn) {
+    snprintf(line, sizeof(line), "Waiting  P%d  A:%d  P:%d",
+             ptCurrentPlayer + 1, ptAngle[ptCurrentPlayer], ptPower[ptCurrentPlayer]);
+  } else {
+    snprintf(line, sizeof(line), "P%d  Angle:%d  Power:%d",
+             ptCurrentPlayer + 1, ptAngle[ptCurrentPlayer], ptPower[ptCurrentPlayer]);
+  }
+
   drawCenteredText(line, 357, 1, RGB565_YELLOW);
 
   drawButton(btnPtAngleDownX, btnPtAngleDownY, btnPtControlW, btnPtControlH,
@@ -2462,12 +2478,13 @@ void drawEmptyGameScreen(const char *title, int state) {
 }
 
 void drawPocketTanksMenuScreen() {
+  activeNetworkGame = NETWORK_GAME_PT;
   localGame = false;
   appState = STATE_POCKET_TANKS;
   gfx->fillScreen(RGB565_BLACK);
 
   drawCenteredText("Tanks Wars", 35, 3, RGB565_WHITE);
-  drawCenteredText("LOCAL ARTILLERY", 75, 2, RGB565_CYAN);
+  drawCenteredText("LOCAL / NETWORK", 75, 2, RGB565_CYAN);
 
   char scoreLine[48];
   snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d", ptScoreP1, ptScoreP2);
@@ -2525,8 +2542,8 @@ void drawPocketTanksPlaceholderScreen(const char *title) {
   gfx->fillScreen(RGB565_BLACK);
 
   drawCenteredText(ptPlaceholderTitle, 90, 2, RGB565_CYAN);
-  drawCenteredText("Network mode", 140, 2, RGB565_YELLOW);
-  drawCenteredText("coming soon", 168, 2, RGB565_YELLOW);
+  drawCenteredText("Use HOST or JOIN", 140, 2, RGB565_YELLOW);
+  drawCenteredText("from the menu", 168, 2, RGB565_YELLOW);
 
   drawButton(btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
@@ -2534,11 +2551,17 @@ void drawPocketTanksPlaceholderScreen(const char *title) {
 
 void drawWaitingHostScreen() {
   bool rpsNetworkGame = (activeNetworkGame == NETWORK_GAME_RPS);
+  bool tanksNetworkGame = (activeNetworkGame == NETWORK_GAME_PT);
 
   gfx->fillScreen(RGB565_BLACK);
 
-  drawCenteredText(rpsNetworkGame ? "RPS HOST" : "HOST ACTIV", 28, 3, RGB565_GREEN);
-  drawCenteredText(rpsNetworkGame ? "Tu esti P1" : "Tu esti X", 72, 2, RGB565_WHITE);
+  if (tanksNetworkGame) {
+    drawCenteredText("TANKS HOST", 28, 3, RGB565_GREEN);
+  } else {
+    drawCenteredText(rpsNetworkGame ? "RPS HOST" : "HOST ACTIV", 28, 3, RGB565_GREEN);
+  }
+
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame) ? "Tu esti P1" : "Tu esti X", 72, 2, RGB565_WHITE);
 
   drawCenteredText("Asteapta oponentul", 118, 2, RGB565_YELLOW);
   drawCenteredText("sa intre cu JOIN", 145, 2, RGB565_YELLOW);
@@ -2558,11 +2581,17 @@ void drawWaitingHostScreen() {
 
 void drawConnectingJoinScreen() {
   bool rpsNetworkGame = (activeNetworkGame == NETWORK_GAME_RPS);
+  bool tanksNetworkGame = (activeNetworkGame == NETWORK_GAME_PT);
 
   gfx->fillScreen(RGB565_BLACK);
 
-  drawCenteredText(rpsNetworkGame ? "RPS JOIN" : "JOIN", 70, 3, RGB565_BLUE);
-  drawCenteredText(rpsNetworkGame ? "Tu esti P2" : "Tu esti O", 120, 2, RGB565_WHITE);
+  if (tanksNetworkGame) {
+    drawCenteredText("TANKS JOIN", 70, 3, RGB565_BLUE);
+  } else {
+    drawCenteredText(rpsNetworkGame ? "RPS JOIN" : "JOIN", 70, 3, RGB565_BLUE);
+  }
+
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame) ? "Tu esti P2" : "Tu esti O", 120, 2, RGB565_WHITE);
 
   drawCenteredText("Connecting...", 190, 2, RGB565_YELLOW);
 
@@ -2761,20 +2790,48 @@ void drawHostIpScreen() {
 }
 
 void startRpsNetworkGame();
+void startPocketTanksNetworkGame();
 
 // ============================================================================
 // NETWORK
 // ============================================================================
 // Shared WiFi setup and message helpers for network-capable games.
 const char *getNetworkGameCode() {
-  return (activeNetworkGame == NETWORK_GAME_RPS) ? "RPS" : "TTT";
+  if (activeNetworkGame == NETWORK_GAME_RPS) return "RPS";
+  if (activeNetworkGame == NETWORK_GAME_PT) return "PT";
+  return "TTT";
 }
 
 void applyNetworkGameCode(const String &code) {
-  if (code == "RPS") {
+  String gameCode = code;
+  int separator = gameCode.indexOf(':');
+
+  if (separator >= 0) {
+    gameCode = gameCode.substring(0, separator);
+  }
+
+  if (gameCode == "RPS") {
     activeNetworkGame = NETWORK_GAME_RPS;
-  } else if (code == "TTT") {
+  } else if (gameCode == "PT") {
+    activeNetworkGame = NETWORK_GAME_PT;
+
+    if (separator >= 0) {
+      unsigned long receivedSeed = (unsigned long)code.substring(separator + 1).toInt();
+
+      if (receivedSeed > 0) {
+        ptNetworkSeed = receivedSeed;
+      }
+    }
+  } else if (gameCode == "TTT") {
     activeNetworkGame = NETWORK_GAME_TTT;
+  }
+}
+
+void preparePocketTanksNetworkSeed() {
+  ptNetworkSeed = (unsigned long)random(1, 2000000000L);
+
+  if (ptNetworkSeed == 0) {
+    ptNetworkSeed = 1;
   }
 }
 
@@ -2782,6 +2839,17 @@ String buildNetworkMessage(const char *prefix) {
   String msg = prefix;
   msg += ":";
   msg += getNetworkGameCode();
+
+  if (activeNetworkGame == NETWORK_GAME_PT &&
+      (strcmp(prefix, "START") == 0 || strcmp(prefix, "NEW") == 0)) {
+    if (ptNetworkSeed == 0) {
+      preparePocketTanksNetworkSeed();
+    }
+
+    msg += ":";
+    msg += String(ptNetworkSeed);
+  }
+
   return msg;
 }
 
@@ -2867,7 +2935,7 @@ void beginSelectedJoinConnection() {
 
   localGame = false;
   isHost = false;
-  myPlayer = (activeNetworkGame == NETWORK_GAME_RPS) ? '2' : 'O';
+  myPlayer = (activeNetworkGame == NETWORK_GAME_TTT) ? 'O' : '2';
   myTurn = false;
   networkConnected = false;
 
@@ -2886,8 +2954,8 @@ void beginHostNetwork() {
 
   localGame = false;
   isHost = true;
-  myPlayer = (activeNetworkGame == NETWORK_GAME_RPS) ? '1' : 'X';
-  myTurn = (activeNetworkGame == NETWORK_GAME_TTT);
+  myPlayer = (activeNetworkGame == NETWORK_GAME_TTT) ? 'X' : '1';
+  myTurn = (activeNetworkGame == NETWORK_GAME_TTT || activeNetworkGame == NETWORK_GAME_PT);
 
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(HOST_IP, HOST_IP, IPAddress(255, 255, 255, 0));
@@ -2952,6 +3020,11 @@ void startNetworkGame() {
     return;
   }
 
+  if (activeNetworkGame == NETWORK_GAME_PT) {
+    startPocketTanksNetworkGame();
+    return;
+  }
+
   resetGameLogic();
 
   appState = STATE_PLAYING;
@@ -2970,6 +3043,10 @@ void checkHostClient() {
     netClient = newClient;
     netClient.setTimeout(10);
     networkConnected = true;
+
+    if (activeNetworkGame == NETWORK_GAME_PT) {
+      preparePocketTanksNetworkSeed();
+    }
 
     sendNetMessage(buildNetworkMessage("START"));
     startNetworkGame();
@@ -3098,6 +3175,56 @@ void applyLocalRpsNetworkChoice(int choice) {
   finishRpsNetworkGameIfReady();
 }
 
+void updatePocketTanksNetworkTurn() {
+  if (activeNetworkGame != NETWORK_GAME_PT || localGame) {
+    myTurn = true;
+    return;
+  }
+
+  myTurn = (myPlayer == '1' && ptCurrentPlayer == 0) ||
+           (myPlayer == '2' && ptCurrentPlayer == 1);
+}
+
+void sendPocketTanksControlMessage(const char *type, int playerIndex, int value) {
+  if (localGame || !networkConnected) return;
+
+  String msg = "PT_";
+  msg += type;
+  msg += ":";
+  msg += String(playerIndex);
+  msg += ",";
+  msg += String(value);
+  sendNetMessage(msg);
+}
+
+void setPocketTanksAngleForPlayer(int playerIndex, int value, bool redraw) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+
+  if (value < 5) value = 5;
+  if (value > 85) value = 85;
+
+  int oldAngle = ptAngle[playerIndex];
+  ptAngle[playerIndex] = value;
+
+  if (redraw && appState == STATE_PT_PLAYING) {
+    redrawPocketTanksTankArea(playerIndex, oldAngle, ptAngle[playerIndex]);
+    drawPocketTanksControls();
+  }
+}
+
+void setPocketTanksPowerForPlayer(int playerIndex, int value, bool redraw) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+
+  if (value < 20) value = 20;
+  if (value > 100) value = 100;
+
+  ptPower[playerIndex] = value;
+
+  if (redraw && appState == STATE_PT_PLAYING) {
+    drawPocketTanksControls();
+  }
+}
+
 void resetPocketTanksRound() {
   // New local artillery round: reset controls and regenerate terrain.
   ptCurrentPlayer = 0;
@@ -3107,9 +3234,21 @@ void resetPocketTanksRound() {
   ptPower[0] = 62;
   ptPower[1] = 62;
   generatePocketTanksTerrain();
+  updatePocketTanksNetworkTurn();
+}
+
+void resetPocketTanksRoundWithSeed(unsigned long seed) {
+  if (seed == 0) {
+    seed = 1;
+  }
+
+  ptNetworkSeed = seed;
+  randomSeed(ptNetworkSeed);
+  resetPocketTanksRound();
 }
 
 void startPocketTanksLocalGame() {
+  activeNetworkGame = NETWORK_GAME_PT;
   stopNetwork();
   localGame = true;
   resetPocketTanksRound();
@@ -3117,9 +3256,23 @@ void startPocketTanksLocalGame() {
   drawPocketTanksGameScreen();
 }
 
+void startPocketTanksNetworkGame() {
+  activeNetworkGame = NETWORK_GAME_PT;
+  localGame = false;
+
+  if (ptNetworkSeed == 0) {
+    preparePocketTanksNetworkSeed();
+  }
+
+  resetPocketTanksRoundWithSeed(ptNetworkSeed);
+  beepStart();
+  drawPocketTanksGameScreen();
+}
+
 void switchPocketTanksTurn() {
   // A missed shot or terrain hit passes control to the other player.
   ptCurrentPlayer = 1 - ptCurrentPlayer;
+  updatePocketTanksNetworkTurn();
   drawPocketTanksGameScreen();
 }
 
@@ -3161,6 +3314,7 @@ void explodePocketTanksAt(int x, int y) {
 
 void finishPocketTanksGame(int winnerIndex) {
   ptWinner = winnerIndex + 1;
+  myTurn = false;
 
   if (ptWinner == 1) {
     ptScoreP1++;
@@ -3174,24 +3328,25 @@ void finishPocketTanksGame(int winnerIndex) {
 }
 
 void adjustPocketTanksAngle(int delta) {
-  int oldAngle = ptAngle[ptCurrentPlayer];
+  int playerIndex = ptCurrentPlayer;
+  int oldAngle = ptAngle[playerIndex];
 
-  ptAngle[ptCurrentPlayer] += delta;
+  setPocketTanksAngleForPlayer(playerIndex, ptAngle[playerIndex] + delta, true);
 
-  if (ptAngle[ptCurrentPlayer] < 5) ptAngle[ptCurrentPlayer] = 5;
-  if (ptAngle[ptCurrentPlayer] > 85) ptAngle[ptCurrentPlayer] = 85;
-
-  redrawPocketTanksTankArea(ptCurrentPlayer, oldAngle, ptAngle[ptCurrentPlayer]);
-  drawPocketTanksControls();
+  if (ptAngle[playerIndex] != oldAngle) {
+    sendPocketTanksControlMessage("ANGLE", playerIndex, ptAngle[playerIndex]);
+  }
 }
 
 void adjustPocketTanksPower(int delta) {
-  ptPower[ptCurrentPlayer] += delta;
+  int playerIndex = ptCurrentPlayer;
+  int oldPower = ptPower[playerIndex];
 
-  if (ptPower[ptCurrentPlayer] < 20) ptPower[ptCurrentPlayer] = 20;
-  if (ptPower[ptCurrentPlayer] > 100) ptPower[ptCurrentPlayer] = 100;
+  setPocketTanksPowerForPlayer(playerIndex, ptPower[playerIndex] + delta, true);
 
-  drawPocketTanksControls();
+  if (ptPower[playerIndex] != oldPower) {
+    sendPocketTanksControlMessage("POWER", playerIndex, ptPower[playerIndex]);
+  }
 }
 
 void firePocketTanksShot() {
@@ -3276,6 +3431,39 @@ void firePocketTanksShot() {
   switchPocketTanksTurn();
 }
 
+void sendPocketTanksFireMessage() {
+  if (localGame || !networkConnected) return;
+
+  String msg = "PT_FIRE:";
+  msg += String(ptCurrentPlayer);
+  msg += ",";
+  msg += String(ptAngle[ptCurrentPlayer]);
+  msg += ",";
+  msg += String(ptPower[ptCurrentPlayer]);
+  sendNetMessage(msg);
+}
+
+void applyRemotePocketTanksAngle(int playerIndex, int value) {
+  activeNetworkGame = NETWORK_GAME_PT;
+  setPocketTanksAngleForPlayer(playerIndex, value, true);
+}
+
+void applyRemotePocketTanksPower(int playerIndex, int value) {
+  activeNetworkGame = NETWORK_GAME_PT;
+  setPocketTanksPowerForPlayer(playerIndex, value, true);
+}
+
+void applyRemotePocketTanksFire(int shooter, int angle, int power) {
+  if (shooter < 0 || shooter > 1) return;
+
+  activeNetworkGame = NETWORK_GAME_PT;
+  ptCurrentPlayer = shooter;
+  setPocketTanksAngleForPlayer(shooter, angle, false);
+  setPocketTanksPowerForPlayer(shooter, power, false);
+  updatePocketTanksNetworkTurn();
+  firePocketTanksShot();
+}
+
 void finishGame(char result) {
   // Tic Tac Toe round completion and persistent score update.
   gameOver = true;
@@ -3355,6 +3543,8 @@ void returnToMenu(bool notifyPeer) {
 
   if (activeNetworkGame == NETWORK_GAME_RPS) {
     drawRpsMenuScreen();
+  } else if (activeNetworkGame == NETWORK_GAME_PT) {
+    drawPocketTanksMenuScreen();
   } else {
     appState = STATE_MENU;
     drawMenuScreen();
@@ -3376,7 +3566,7 @@ void returnToHome(bool notifyPeer) {
 // NETWORK MESSAGES
 // ============================================================================
 // Text protocol over TCP. Messages are line-based and intentionally simple:
-// START:<game>, NEW:<game>, MOVE:col,row, RPS_CHOICE:n, LEAVE.
+// START:<game>, NEW:<game>, MOVE:col,row, RPS_CHOICE:n, PT_* messages, LEAVE.
 void handleNetMessage(String msg) {
   msg.trim();
 
@@ -3414,6 +3604,44 @@ void handleNetMessage(String msg) {
     return;
   }
 
+  if (msg.startsWith("PT_ANGLE:")) {
+    int comma = msg.indexOf(',');
+
+    if (comma > 9) {
+      int playerIndex = msg.substring(9, comma).toInt();
+      int value = msg.substring(comma + 1).toInt();
+      applyRemotePocketTanksAngle(playerIndex, value);
+    }
+
+    return;
+  }
+
+  if (msg.startsWith("PT_POWER:")) {
+    int comma = msg.indexOf(',');
+
+    if (comma > 9) {
+      int playerIndex = msg.substring(9, comma).toInt();
+      int value = msg.substring(comma + 1).toInt();
+      applyRemotePocketTanksPower(playerIndex, value);
+    }
+
+    return;
+  }
+
+  if (msg.startsWith("PT_FIRE:")) {
+    int firstComma = msg.indexOf(',');
+    int secondComma = msg.indexOf(',', firstComma + 1);
+
+    if (firstComma > 8 && secondComma > firstComma) {
+      int shooter = msg.substring(8, firstComma).toInt();
+      int angle = msg.substring(firstComma + 1, secondComma).toInt();
+      int power = msg.substring(secondComma + 1).toInt();
+      applyRemotePocketTanksFire(shooter, angle, power);
+    }
+
+    return;
+  }
+
   if (msg.startsWith("MOVE:")) {
     if (activeNetworkGame != NETWORK_GAME_TTT) return;
 
@@ -3437,7 +3665,8 @@ void pollNetwork() {
 
     if (appState == STATE_PLAYING || appState == STATE_RESULT ||
         appState == STATE_RPS_CHOICE_P1 || appState == STATE_RPS_CHOICE_P2 ||
-        appState == STATE_RPS_WAITING_CHOICE || appState == STATE_RPS_RESULT) {
+        appState == STATE_RPS_WAITING_CHOICE || appState == STATE_RPS_RESULT ||
+        appState == STATE_PT_PLAYING || appState == STATE_PT_RESULT) {
       gfx->fillScreen(RGB565_BLACK);
       drawCenteredText("Conexiune pierduta", 180, 2, RGB565_RED);
       delay(1200);
@@ -3558,14 +3787,16 @@ void handlePocketTanksMenuTouch(int x, int y) {
   }
 
   if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
-    beepClick();
-    drawPocketTanksPlaceholderScreen("Tanks Wars Host");
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_PT;
+    startHostMode();
     return;
   }
 
   if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
-    beepClick();
-    drawPocketTanksPlaceholderScreen("Tanks Wars Join");
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_PT;
+    startJoinMode();
     return;
   }
 
@@ -3594,50 +3825,72 @@ void handlePocketTanksPlaceholderTouch(int x, int y) {
 void handlePocketTanksPlayingTouch(int x, int y) {
   // Tanks Wars controls are button-only for now: angle, power, fire, menu.
   if (inRect(x, y, btnPtAngleDownX, btnPtAngleDownY, btnPtControlW, btnPtControlH)) {
+    if (!localGame && !myTurn) return;
     beepClick();
     adjustPocketTanksAngle(-5);
     return;
   }
 
   if (inRect(x, y, btnPtAngleUpX, btnPtAngleUpY, btnPtControlW, btnPtControlH)) {
+    if (!localGame && !myTurn) return;
     beepClick();
     adjustPocketTanksAngle(5);
     return;
   }
 
   if (inRect(x, y, btnPtPowerDownX, btnPtPowerDownY, btnPtControlW, btnPtControlH)) {
+    if (!localGame && !myTurn) return;
     beepClick();
     adjustPocketTanksPower(-5);
     return;
   }
 
   if (inRect(x, y, btnPtPowerUpX, btnPtPowerUpY, btnPtControlW, btnPtControlH)) {
+    if (!localGame && !myTurn) return;
     beepClick();
     adjustPocketTanksPower(5);
     return;
   }
 
   if (inRect(x, y, btnPtFireX, btnPtFireY, btnPtFireW, btnPtFireH)) {
+    if (!localGame && !myTurn) return;
+    sendPocketTanksFireMessage();
     firePocketTanksShot();
     return;
   }
 
   if (inRect(x, y, btnPtMenuX, btnPtMenuY, btnPtMenuW, btnPtMenuH)) {
     beepClick();
-    drawPocketTanksMenuScreen();
+    if (localGame) {
+      drawPocketTanksMenuScreen();
+    } else {
+      returnToMenu(true);
+    }
     return;
   }
 }
 
 void handlePocketTanksResultTouch(int x, int y) {
   if (inRect(x, y, btnPlayAgainX, btnPlayAgainY, btnPlayAgainW, btnPlayAgainH)) {
-    startPocketTanksLocalGame();
+    if (localGame) {
+      startPocketTanksLocalGame();
+    } else {
+      beepStart();
+      preparePocketTanksNetworkSeed();
+      sendNetMessage(buildNetworkMessage("NEW"));
+      startNetworkGame();
+    }
+
     return;
   }
 
   if (inRect(x, y, btnResultMenuX, btnResultMenuY, btnResultMenuW, btnResultMenuH)) {
     beepClick();
-    drawPocketTanksMenuScreen();
+    if (localGame) {
+      drawPocketTanksMenuScreen();
+    } else {
+      returnToMenu(true);
+    }
     return;
   }
 }
