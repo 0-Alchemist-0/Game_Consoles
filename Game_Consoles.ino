@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 6.3 - 2026-06-17 22:28 - Added Pong to the Games menu with a
+// local playable portrait paddle game and arcade-style menu.
 // Version 6.2 - 2026-06-17 22:07 - Added Host/Join network gameplay for
 // Breakout where the first player to lose all three lives loses the match.
 // Version 6.1 - 2026-06-17 21:59 - Matched Breakout menu buttons to the
@@ -151,8 +153,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 6.2";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V62-2026061722";
+const char *APP_VERSION_TEXT = "Version 6.3";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V63-2026061722";
 
 
 
@@ -250,6 +252,9 @@ enum AppState {
   STATE_BREAKOUT,
   STATE_BREAKOUT_PLAYING,
   STATE_BREAKOUT_PLACEHOLDER,
+  STATE_PONG,
+  STATE_PONG_PLAYING,
+  STATE_PONG_PLACEHOLDER,
   STATE_EMPTY_GAME,
   STATE_MENU,
   STATE_SETTINGS,
@@ -399,6 +404,55 @@ int breakoutTouchX = -1;
 int breakoutTouchY = -1;
 unsigned long breakoutLastFrame = 0;
 
+// Pong local mode uses a bottom player paddle and a simple CPU paddle at the
+// top of the portrait court. First side to five points wins the match.
+static const int PONG_HUD_H = 34;
+static const int PONG_PLAY_TOP = 40;
+static const int PONG_PLAY_BOTTOM = 396;
+static const int PONG_PADDLE_W = 76;
+static const int PONG_PADDLE_H = 9;
+static const int PONG_PLAYER_Y = 356;
+static const int PONG_CPU_Y = 58;
+static const int PONG_BALL_R = 4;
+static const int PONG_SCORE_LIMIT = 5;
+static const int PONG_PLAYER_SPEED = 9;
+static const int PONG_CPU_SPEED = 5;
+static const unsigned long PONG_FRAME_MS = 20;
+
+const int btnPongLeftX = 18;
+const int btnPongLeftY = 410;
+const int btnPongLeftW = 88;
+const int btnPongLeftH = 52;
+
+const int btnPongRightX = 214;
+const int btnPongRightY = 410;
+const int btnPongRightW = 88;
+const int btnPongRightH = 52;
+
+const int btnPongMenuX = 116;
+const int btnPongMenuY = 422;
+const int btnPongMenuW = 88;
+const int btnPongMenuH = 36;
+
+float pongBallX = 0.0;
+float pongBallY = 0.0;
+float pongBallVX = 0.0;
+float pongBallVY = 0.0;
+int pongOldBallX = -1;
+int pongOldBallY = -1;
+int pongPlayerX = 0;
+int pongCpuX = 0;
+int pongOldPlayerX = -1;
+int pongOldCpuX = -1;
+int pongPlayerScore = 0;
+int pongCpuScore = 0;
+bool pongGameOver = false;
+bool pongPlayerWon = false;
+bool pongTouchDown = false;
+int pongTouchX = -1;
+int pongTouchY = -1;
+unsigned long pongLastFrame = 0;
+
 // Touch edge detection and debounce. Touch actions fire once per press, not on
 // every loop while the finger is still down.
 bool touchWasDown = false;
@@ -472,6 +526,7 @@ const int btnGamesNavLeftX = 35;
 const int btnGamesNavRightX = 170;
 const int btnGamesNavW = 115;
 const int btnGamesBreakoutY = 205;
+const int btnGamesPongY = 275;
 
 const int btnEmptyBackX = 90;
 const int btnEmptyBackY = 420;
@@ -1744,6 +1799,63 @@ void drawBreakoutArcadeHome() {
   drawBreakoutTitleSign();
 }
 
+void drawPongTitleSign() {
+  uint16_t signFill = rgb888to565(12, 10, 28);
+  uint16_t arcadeOrange = rgb888to565(255, 128, 0);
+  uint16_t arcadeBlue = rgb888to565(0, 65, 210);
+  uint16_t arcadeMagenta = rgb888to565(255, 0, 180);
+
+  gfx->fillRoundRect(18, 18, 284, 92, 10, signFill);
+  gfx->drawRoundRect(18, 18, 284, 92, 10, arcadeBlue);
+  gfx->drawRoundRect(22, 22, 276, 84, 8, RGB565_CYAN);
+  gfx->drawRoundRect(26, 26, 268, 76, 7, arcadeOrange);
+
+  for (int x = 38; x < 286; x += 20) {
+    gfx->fillCircle(x, 30, 3, arcadeMagenta);
+    gfx->drawCircle(x, 30, 4, RGB565_YELLOW);
+    gfx->fillCircle(x, 98, 3, arcadeBlue);
+    gfx->drawCircle(x, 98, 4, RGB565_CYAN);
+  }
+
+  drawPixelText("PONG", 84, 48, 5, RGB565_YELLOW, RGB565_RED);
+}
+
+void drawPongCourtDecor() {
+  uint16_t courtLine = RGB565_CYAN;
+  uint16_t arcadeMagenta = rgb888to565(255, 0, 180);
+  uint16_t darkPanel = rgb888to565(2, 4, 18);
+
+  gfx->fillRoundRect(42, 132, 236, 210, 8, darkPanel);
+  gfx->drawRoundRect(42, 132, 236, 210, 8, courtLine);
+  gfx->drawRoundRect(47, 137, 226, 200, 6, arcadeMagenta);
+
+  for (int x = 58; x < 262; x += 22) {
+    gfx->drawLine(x, 235, x + 10, 235, RGB565_WHITE);
+  }
+
+  gfx->fillRoundRect(122, 155, 76, 9, 4, RGB565_RED);
+  gfx->drawRoundRect(122, 155, 76, 9, 4, RGB565_WHITE);
+  gfx->fillRoundRect(122, 310, 76, 9, 4, RGB565_GREEN);
+  gfx->drawRoundRect(122, 310, 76, 9, 4, RGB565_WHITE);
+
+  gfx->fillCircle(160, 234, 7, RGB565_WHITE);
+  gfx->drawCircle(160, 234, 8, RGB565_YELLOW);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565_CYAN);
+  gfx->setCursor(92, 350);
+  gfx->print("CPU VS PLAYER");
+}
+
+void drawPongArcadeHome() {
+  fillArcadeGradient();
+  drawArcadeStars();
+  drawArcadeCabinets();
+  drawArcadeFloor();
+  drawPongCourtDecor();
+  drawPongTitleSign();
+}
+
 void drawTransparentArcadeButton(int x, int y, int w, int h, const char *label, int textSize) {
   uint16_t mainTextColor = RGB565_YELLOW;
   uint16_t secondTextColor = RGB565_RED;
@@ -2634,6 +2746,8 @@ void drawGamesMoreScreen() {
 
   drawTransparentArcadeButton(btnGamesX, btnGamesBreakoutY, btnGamesW, btnGamesH, "BREAKOUT", 2);
 
+  drawTransparentArcadeButton(btnGamesX, btnGamesPongY, btnGamesW, btnGamesH, "PONG", 2);
+
   drawTransparentArcadeButton(btnGamesNavLeftX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "BACK", 2);
 
   drawTransparentArcadeButton(btnGamesNavRightX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "HOME", 2);
@@ -3073,6 +3187,256 @@ void drawBreakoutMenuScreen() {
 
 void drawBreakoutPlaceholderScreen(const char *title) {
   appState = STATE_BREAKOUT_PLACEHOLDER;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText(title, 105, 2, RGB565_CYAN);
+  drawCenteredText("coming soon", 150, 2, RGB565_YELLOW);
+
+  drawButton(btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+}
+
+// ============================================================================
+// PONG GAME
+// ============================================================================
+// Local Pong: the player controls the lower paddle, while a simple CPU tracks
+// the ball with a capped movement speed. First to five points wins.
+void drawPongHud() {
+  gfx->fillRect(0, 0, screenW, PONG_HUD_H, RGB565_BLACK);
+  gfx->drawLine(0, PONG_HUD_H, screenW - 1, PONG_HUD_H, RGB565_CYAN);
+
+  char line[48];
+  snprintf(line, sizeof(line), "PLAYER %d   CPU %d", pongPlayerScore, pongCpuScore);
+  drawCenteredText(line, 9, 2, RGB565_WHITE);
+}
+
+void drawPongControls() {
+  gfx->fillRect(0, PONG_PLAY_BOTTOM + 1, screenW,
+                screenH - PONG_PLAY_BOTTOM - 1, RGB565_BLACK);
+  gfx->drawLine(0, PONG_PLAY_BOTTOM, screenW - 1, PONG_PLAY_BOTTOM, RGB565_CYAN);
+
+  drawButton(btnPongLeftX, btnPongLeftY, btnPongLeftW, btnPongLeftH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "<", 3);
+
+  drawButton(btnPongRightX, btnPongRightY, btnPongRightW, btnPongRightH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, ">", 3);
+
+  drawButton(btnPongMenuX, btnPongMenuY, btnPongMenuW, btnPongMenuH,
+             RGB565_RED, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
+}
+
+void drawPongCourt() {
+  gfx->fillScreen(RGB565_BLACK);
+  drawPongHud();
+
+  gfx->drawRect(0, PONG_PLAY_TOP, screenW, PONG_PLAY_BOTTOM - PONG_PLAY_TOP, RGB565_CYAN);
+
+  for (int x = 12; x < screenW - 12; x += 24) {
+    gfx->drawLine(x, (PONG_PLAY_TOP + PONG_PLAY_BOTTOM) / 2,
+                  x + 12, (PONG_PLAY_TOP + PONG_PLAY_BOTTOM) / 2, RGB565_WHITE);
+  }
+
+  drawPongControls();
+}
+
+void resetPongBall(int verticalDirection) {
+  pongBallX = screenW / 2;
+  pongBallY = (PONG_PLAY_TOP + PONG_PLAY_BOTTOM) / 2;
+  pongBallVX = (random(0, 2) == 0) ? -2.4 : 2.4;
+  pongBallVY = verticalDirection * 3.2;
+  pongOldBallX = -1;
+  pongOldBallY = -1;
+}
+
+void drawPongEntities() {
+  if (pongOldBallX >= 0) {
+    gfx->fillCircle(pongOldBallX, pongOldBallY, PONG_BALL_R + 1, RGB565_BLACK);
+  }
+
+  if (pongOldCpuX >= 0 && pongOldCpuX != pongCpuX) {
+    gfx->fillRect(pongOldCpuX, PONG_CPU_Y, PONG_PADDLE_W, PONG_PADDLE_H, RGB565_BLACK);
+  }
+
+  if (pongOldPlayerX >= 0 && pongOldPlayerX != pongPlayerX) {
+    gfx->fillRect(pongOldPlayerX, PONG_PLAYER_Y, PONG_PADDLE_W, PONG_PADDLE_H, RGB565_BLACK);
+  }
+
+  gfx->fillRoundRect(pongCpuX, PONG_CPU_Y, PONG_PADDLE_W, PONG_PADDLE_H, 4, RGB565_RED);
+  gfx->drawRoundRect(pongCpuX, PONG_CPU_Y, PONG_PADDLE_W, PONG_PADDLE_H, 4, RGB565_WHITE);
+
+  gfx->fillRoundRect(pongPlayerX, PONG_PLAYER_Y, PONG_PADDLE_W, PONG_PADDLE_H, 4, RGB565_GREEN);
+  gfx->drawRoundRect(pongPlayerX, PONG_PLAYER_Y, PONG_PADDLE_W, PONG_PADDLE_H, 4, RGB565_WHITE);
+
+  gfx->fillCircle((int)pongBallX, (int)pongBallY, PONG_BALL_R, RGB565_WHITE);
+
+  pongOldCpuX = pongCpuX;
+  pongOldPlayerX = pongPlayerX;
+  pongOldBallX = (int)pongBallX;
+  pongOldBallY = (int)pongBallY;
+}
+
+void drawPongEndOverlay() {
+  gfx->fillRoundRect(24, 178, 272, 124, 10, RGB565_BLACK);
+  gfx->drawRoundRect(24, 178, 272, 124, 10, RGB565_YELLOW);
+
+  drawCenteredText(pongPlayerWon ? "YOU WIN" : "CPU WINS", 205, 3,
+                   pongPlayerWon ? RGB565_GREEN : RGB565_RED);
+
+  char line[32];
+  snprintf(line, sizeof(line), "%d - %d", pongPlayerScore, pongCpuScore);
+  drawCenteredText(line, 248, 2, RGB565_WHITE);
+  drawCenteredText("Tap to restart", 280, 1, RGB565_CYAN);
+}
+
+void finishPongGame(bool playerWon) {
+  pongGameOver = true;
+  pongPlayerWon = playerWon;
+  drawPongHud();
+  drawPongEndOverlay();
+
+  if (playerWon) {
+    beepWin();
+  } else {
+    beepDraw();
+  }
+}
+
+void newPongMatch() {
+  pongPlayerScore = 0;
+  pongCpuScore = 0;
+  pongGameOver = false;
+  pongPlayerWon = false;
+  pongPlayerX = (screenW - PONG_PADDLE_W) / 2;
+  pongCpuX = (screenW - PONG_PADDLE_W) / 2;
+  pongOldPlayerX = -1;
+  pongOldCpuX = -1;
+
+  drawPongCourt();
+  resetPongBall(1);
+  drawPongEntities();
+  pongLastFrame = millis();
+}
+
+void updatePongGame() {
+  if (appState != STATE_PONG_PLAYING) return;
+
+  unsigned long now = millis();
+  if (now - pongLastFrame < PONG_FRAME_MS) return;
+  pongLastFrame = now;
+
+  if (pongGameOver) return;
+
+  if (pongTouchDown &&
+      inRect(pongTouchX, pongTouchY, btnPongLeftX, btnPongLeftY, btnPongLeftW, btnPongLeftH)) {
+    pongPlayerX -= PONG_PLAYER_SPEED;
+  }
+
+  if (pongTouchDown &&
+      inRect(pongTouchX, pongTouchY, btnPongRightX, btnPongRightY, btnPongRightW, btnPongRightH)) {
+    pongPlayerX += PONG_PLAYER_SPEED;
+  }
+
+  if (pongTouchDown && pongTouchY > 255 && pongTouchY < PONG_PLAY_BOTTOM) {
+    pongPlayerX = pongTouchX - PONG_PADDLE_W / 2;
+  }
+
+  pongPlayerX = constrain(pongPlayerX, 4, screenW - PONG_PADDLE_W - 4);
+
+  int cpuTargetX = (int)pongBallX - PONG_PADDLE_W / 2;
+  if (pongCpuX + PONG_PADDLE_W / 2 < cpuTargetX + PONG_PADDLE_W / 2) {
+    pongCpuX += PONG_CPU_SPEED;
+  } else if (pongCpuX + PONG_PADDLE_W / 2 > cpuTargetX + PONG_PADDLE_W / 2) {
+    pongCpuX -= PONG_CPU_SPEED;
+  }
+
+  pongCpuX = constrain(pongCpuX, 4, screenW - PONG_PADDLE_W - 4);
+
+  pongBallX += pongBallVX;
+  pongBallY += pongBallVY;
+
+  if (pongBallX <= PONG_BALL_R) {
+    pongBallX = PONG_BALL_R;
+    pongBallVX = -pongBallVX;
+    beepClick();
+  } else if (pongBallX >= screenW - PONG_BALL_R) {
+    pongBallX = screenW - PONG_BALL_R;
+    pongBallVX = -pongBallVX;
+    beepClick();
+  }
+
+  if (pongBallVY < 0 &&
+      pongBallY - PONG_BALL_R <= PONG_CPU_Y + PONG_PADDLE_H &&
+      pongBallY + PONG_BALL_R >= PONG_CPU_Y &&
+      pongBallX >= pongCpuX - PONG_BALL_R &&
+      pongBallX <= pongCpuX + PONG_PADDLE_W + PONG_BALL_R) {
+    pongBallY = PONG_CPU_Y + PONG_PADDLE_H + PONG_BALL_R;
+    pongBallVY = fabs(pongBallVY);
+    float offset = (pongBallX - (pongCpuX + PONG_PADDLE_W / 2.0)) / (PONG_PADDLE_W / 2.0);
+    pongBallVX = offset * 3.8;
+    beepMove();
+  }
+
+  if (pongBallVY > 0 &&
+      pongBallY + PONG_BALL_R >= PONG_PLAYER_Y &&
+      pongBallY - PONG_BALL_R <= PONG_PLAYER_Y + PONG_PADDLE_H &&
+      pongBallX >= pongPlayerX - PONG_BALL_R &&
+      pongBallX <= pongPlayerX + PONG_PADDLE_W + PONG_BALL_R) {
+    pongBallY = PONG_PLAYER_Y - PONG_BALL_R;
+    pongBallVY = -fabs(pongBallVY);
+    float offset = (pongBallX - (pongPlayerX + PONG_PADDLE_W / 2.0)) / (PONG_PADDLE_W / 2.0);
+    pongBallVX = offset * 3.8;
+    beepMove();
+  }
+
+  if (pongBallY < PONG_PLAY_TOP) {
+    pongPlayerScore++;
+    drawPongCourt();
+
+    if (pongPlayerScore >= PONG_SCORE_LIMIT) {
+      finishPongGame(true);
+      return;
+    }
+
+    resetPongBall(-1);
+  } else if (pongBallY > PONG_PLAY_BOTTOM) {
+    pongCpuScore++;
+    drawPongCourt();
+
+    if (pongCpuScore >= PONG_SCORE_LIMIT) {
+      finishPongGame(false);
+      return;
+    }
+
+    resetPongBall(1);
+  }
+
+  drawPongEntities();
+}
+
+void startPongLocalGame() {
+  stopNetwork();
+  localGame = true;
+  appState = STATE_PONG_PLAYING;
+  beepStart();
+  newPongMatch();
+}
+
+void drawPongMenuScreen() {
+  localGame = false;
+  appState = STATE_PONG;
+  drawPongArcadeHome();
+
+  drawTransparentArcadeButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH, "LOCAL", 2);
+
+  drawTransparentArcadeButton(btnHostX, btnHostY, btnHostW, btnHostH, "HOST", 2);
+
+  drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN", 2);
+
+  drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
+}
+
+void drawPongPlaceholderScreen(const char *title) {
+  appState = STATE_PONG_PLACEHOLDER;
   gfx->fillScreen(RGB565_BLACK);
 
   drawCenteredText(title, 105, 2, RGB565_CYAN);
@@ -4409,6 +4773,12 @@ void handleGamesMoreTouch(int x, int y) {
     return;
   }
 
+  if (inRect(x, y, btnGamesX, btnGamesPongY, btnGamesW, btnGamesH)) {
+    beepClick();
+    drawPongMenuScreen();
+    return;
+  }
+
   if (inRect(x, y, btnGamesNavLeftX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH)) {
     beepClick();
     drawGamesScreen();
@@ -4525,6 +4895,52 @@ void handleBreakoutPlayingTouch(int x, int y) {
       sendNetMessage(buildNetworkMessage("NEW"));
       startNetworkGame();
     }
+    return;
+  }
+}
+
+void handlePongMenuTouch(int x, int y) {
+  if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
+    startPongLocalGame();
+    return;
+  }
+
+  if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
+    beepClick();
+    drawPongPlaceholderScreen("PONG HOST");
+    return;
+  }
+
+  if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
+    beepClick();
+    drawPongPlaceholderScreen("PONG JOIN");
+    return;
+  }
+
+  if (inRect(x, y, btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH)) {
+    beepClick();
+    drawGamesMoreScreen();
+    return;
+  }
+}
+
+void handlePongPlaceholderTouch(int x, int y) {
+  if (inRect(x, y, btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH)) {
+    beepClick();
+    drawPongMenuScreen();
+    return;
+  }
+}
+
+void handlePongPlayingTouch(int x, int y) {
+  if (inRect(x, y, btnPongMenuX, btnPongMenuY, btnPongMenuW, btnPongMenuH)) {
+    beepClick();
+    drawPongMenuScreen();
+    return;
+  }
+
+  if (pongGameOver) {
+    newPongMatch();
     return;
   }
 }
@@ -5058,6 +5474,12 @@ void handleTouch(int x, int y) {
     handleBreakoutPlayingTouch(x, y);
   } else if (appState == STATE_BREAKOUT_PLACEHOLDER) {
     handleBreakoutPlaceholderTouch(x, y);
+  } else if (appState == STATE_PONG) {
+    handlePongMenuTouch(x, y);
+  } else if (appState == STATE_PONG_PLAYING) {
+    handlePongPlayingTouch(x, y);
+  } else if (appState == STATE_PONG_PLACEHOLDER) {
+    handlePongPlaceholderTouch(x, y);
   } else if (appState == STATE_EMPTY_GAME) {
     handleEmptyGameTouch(x, y);
   } else if (appState == STATE_MENU) {
@@ -5166,6 +5588,12 @@ void loop() {
     breakoutTouchY = ty;
   }
 
+  pongTouchDown = touched;
+  if (touched) {
+    pongTouchX = tx;
+    pongTouchY = ty;
+  }
+
   if (touched && !touchWasDown) {
     unsigned long now = millis();
 
@@ -5187,6 +5615,7 @@ void loop() {
   }
 
   updateBreakoutGame();
+  updatePongGame();
 
   delay(10);
 }
