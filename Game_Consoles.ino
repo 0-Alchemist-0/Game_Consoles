@@ -1,6 +1,13 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 6.2 - 2026-06-17 22:07 - Added Host/Join network gameplay for
+// Breakout where the first player to lose all three lives loses the match.
+// Version 6.1 - 2026-06-17 21:59 - Matched Breakout menu buttons to the
+// Tic Tac Toe transparent arcade text style by removing extra slot panels.
+// Version 6.0 - 2026-06-17 21:42 - Added a generated arcade fallback
+// background for the Breakout menu and switched its menu buttons to the
+// transparent Tic Tac Toe arcade text style.
 // Version 5.9 - 2026-06-17 20:37 - Implemented local portrait Breakout
 // gameplay with bricks, paddle, touch controls, lives, score, and restart.
 // Version 5.8 - 2026-06-17 20:15 - Added a generated arcade fallback
@@ -144,8 +151,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 5.9";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V59-2026061720";
+const char *APP_VERSION_TEXT = "Version 6.2";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V62-2026061722";
 
 
 
@@ -264,7 +271,8 @@ AppState appState = STATE_HOME;
 enum NetworkGameType {
   NETWORK_GAME_TTT,
   NETWORK_GAME_RPS,
-  NETWORK_GAME_PT
+  NETWORK_GAME_PT,
+  NETWORK_GAME_BREAKOUT
 };
 
 NetworkGameType activeNetworkGame = NETWORK_GAME_TTT;
@@ -385,6 +393,7 @@ int breakoutScore = 0;
 int breakoutLives = 3;
 bool breakoutGameOver = false;
 bool breakoutWin = false;
+bool breakoutNetworkLossSent = false;
 bool breakoutTouchDown = false;
 int breakoutTouchX = -1;
 int breakoutTouchY = -1;
@@ -1648,6 +1657,93 @@ void drawTanksWarsArcadeHome() {
   drawTanksWarsTitleSign();
 }
 
+void drawBreakoutTitleSign() {
+  uint16_t signFill = rgb888to565(12, 10, 28);
+  uint16_t arcadeOrange = rgb888to565(255, 128, 0);
+  uint16_t arcadeBlue = rgb888to565(0, 65, 210);
+  uint16_t arcadeMagenta = rgb888to565(255, 0, 180);
+
+  gfx->fillRoundRect(16, 18, 288, 96, 10, signFill);
+  gfx->drawRoundRect(16, 18, 288, 96, 10, arcadeMagenta);
+  gfx->drawRoundRect(20, 22, 280, 88, 8, RGB565_CYAN);
+  gfx->drawRoundRect(24, 26, 272, 80, 7, arcadeOrange);
+
+  for (int x = 36; x < 286; x += 20) {
+    gfx->fillCircle(x, 31, 3, arcadeOrange);
+    gfx->drawCircle(x, 31, 4, RGB565_YELLOW);
+    gfx->fillCircle(x, 101, 3, arcadeBlue);
+    gfx->drawCircle(x, 101, 4, RGB565_CYAN);
+  }
+
+  drawPixelText("BREAK", 51, 38, 4, RGB565_YELLOW, RGB565_RED);
+  drawPixelText("OUT", 116, 72, 4, RGB565_CYAN, arcadeBlue);
+}
+
+void drawBreakoutBrickWallDecor() {
+  uint16_t brickColors[] = {
+    rgb888to565(230, 40, 30),
+    rgb888to565(240, 130, 20),
+    rgb888to565(240, 220, 20),
+    rgb888to565(30, 220, 40),
+    rgb888to565(20, 90, 220)
+  };
+
+  int brickW = 38;
+  int brickH = 14;
+  int startY = 128;
+
+  for (int row = 0; row < 5; row++) {
+    int offset = (row % 2 == 0) ? 10 : 30;
+
+    for (int x = offset; x < screenW - 10; x += brickW + 4) {
+      uint16_t color = brickColors[row];
+      gfx->fillRoundRect(x, startY + row * 18, brickW, brickH, 3, color);
+      gfx->drawRoundRect(x, startY + row * 18, brickW, brickH, 3, RGB565_BLACK);
+      gfx->drawLine(x + 3, startY + row * 18 + 2, x + brickW - 5,
+                    startY + row * 18 + 2, RGB565_WHITE);
+    }
+  }
+}
+
+void drawBreakoutPlayfieldDecor() {
+  uint16_t arcadeBlue = rgb888to565(0, 65, 210);
+  uint16_t arcadeMagenta = rgb888to565(255, 0, 180);
+  uint16_t darkPanel = rgb888to565(3, 5, 22);
+
+  gfx->fillRoundRect(40, 224, 240, 118, 8, darkPanel);
+  gfx->drawRoundRect(40, 224, 240, 118, 8, arcadeBlue);
+  gfx->drawRoundRect(44, 228, 232, 110, 7, arcadeMagenta);
+
+  for (int i = 0; i < 8; i++) {
+    int x = 72 + i * 24;
+    int y = 250 + (int)(sin((float)i * 0.75f) * 28.0f);
+    gfx->drawPixel(x, y, RGB565_WHITE);
+    gfx->drawCircle(x, y, 2, RGB565_CYAN);
+  }
+
+  gfx->fillCircle(222, 244, 7, RGB565_WHITE);
+  gfx->drawCircle(222, 244, 8, RGB565_YELLOW);
+
+  gfx->fillRoundRect(112, 315, 96, 12, 6, RGB565_RED);
+  gfx->drawRoundRect(112, 315, 96, 12, 6, RGB565_WHITE);
+  gfx->fillRect(124, 318, 72, 5, RGB565_YELLOW);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565_CYAN);
+  gfx->setCursor(81, 348);
+  gfx->print("BRICK SMASHER  1UP");
+}
+
+void drawBreakoutArcadeHome() {
+  fillArcadeGradient();
+  drawArcadeStars();
+  drawArcadeCabinets();
+  drawArcadeFloor();
+  drawBreakoutBrickWallDecor();
+  drawBreakoutPlayfieldDecor();
+  drawBreakoutTitleSign();
+}
+
 void drawTransparentArcadeButton(int x, int y, int w, int h, const char *label, int textSize) {
   uint16_t mainTextColor = RGB565_YELLOW;
   uint16_t secondTextColor = RGB565_RED;
@@ -2757,20 +2853,28 @@ void drawBreakoutEndOverlay() {
   gfx->fillRoundRect(24, 178, 272, 124, 10, RGB565_BLACK);
   gfx->drawRoundRect(24, 178, 272, 124, 10, RGB565_YELLOW);
 
-  drawCenteredText(breakoutWin ? "YOU WIN" : "GAME OVER", 205, 3,
-                   breakoutWin ? RGB565_GREEN : RGB565_YELLOW);
+  const char *title = breakoutWin ? "YOU WIN" : (localGame ? "GAME OVER" : "YOU LOSE");
+
+  drawCenteredText(title, 205, 3, breakoutWin ? RGB565_GREEN : RGB565_YELLOW);
 
   char scoreLine[32];
   snprintf(scoreLine, sizeof(scoreLine), "Score %d", breakoutScore);
   drawCenteredText(scoreLine, 248, 2, RGB565_WHITE);
-  drawCenteredText("Tap to restart", 280, 1, RGB565_CYAN);
+  drawCenteredText(localGame ? "Tap to restart" : "Tap play again", 280, 1, RGB565_CYAN);
 }
 
 void finishBreakoutRound(bool won) {
+  if (breakoutGameOver) return;
+
   breakoutGameOver = true;
   breakoutWin = won;
   drawBreakoutHud();
   drawBreakoutEndOverlay();
+
+  if (!localGame && !won && !breakoutNetworkLossSent) {
+    breakoutNetworkLossSent = true;
+    sendNetMessage("BR_LOSE");
+  }
 
   if (won) {
     beepWin();
@@ -2779,19 +2883,23 @@ void finishBreakoutRound(bool won) {
   }
 }
 
-void newBreakoutGame() {
-  breakoutScore = 0;
-  breakoutLives = 3;
-  breakoutGameOver = false;
-  breakoutWin = false;
-  breakoutPaddleX = (BREAKOUT_SCREEN_W - BREAKOUT_PADDLE_W) / 2;
-  breakoutOldPaddleX = -1;
-
+void resetBreakoutBrickWall() {
   for (int r = 0; r < BREAKOUT_BRICK_ROWS; r++) {
     for (int c = 0; c < BREAKOUT_BRICK_COLS; c++) {
       breakoutBricks[r][c] = true;
     }
   }
+}
+
+void newBreakoutGame() {
+  breakoutScore = 0;
+  breakoutLives = 3;
+  breakoutGameOver = false;
+  breakoutWin = false;
+  breakoutNetworkLossSent = false;
+  breakoutPaddleX = (BREAKOUT_SCREEN_W - BREAKOUT_PADDLE_W) / 2;
+  breakoutOldPaddleX = -1;
+  resetBreakoutBrickWall();
 
   gfx->fillScreen(RGB565_BLACK);
   drawBreakoutHud();
@@ -2883,8 +2991,21 @@ void updateBreakoutGame() {
   }
 
   if (hitBrick && !breakoutHasBricksLeft()) {
-    drawBreakoutEntities();
-    finishBreakoutRound(true);
+    if (localGame) {
+      drawBreakoutEntities();
+      finishBreakoutRound(true);
+    } else {
+      resetBreakoutBrickWall();
+      breakoutOldBallX = -1;
+      breakoutOldBallY = -1;
+      breakoutOldPaddleX = -1;
+      gfx->fillScreen(RGB565_BLACK);
+      drawBreakoutHud();
+      drawBreakoutBricks();
+      drawBreakoutControls();
+      resetBreakoutBall();
+      drawBreakoutEntities();
+    }
     return;
   }
 
@@ -2908,6 +3029,7 @@ void updateBreakoutGame() {
 }
 
 void startBreakoutLocalGame() {
+  activeNetworkGame = NETWORK_GAME_BREAKOUT;
   stopNetwork();
   localGame = true;
   appState = STATE_BREAKOUT_PLAYING;
@@ -2915,25 +3037,38 @@ void startBreakoutLocalGame() {
   newBreakoutGame();
 }
 
+void startBreakoutNetworkGame() {
+  activeNetworkGame = NETWORK_GAME_BREAKOUT;
+  localGame = false;
+  myTurn = true;
+  appState = STATE_BREAKOUT_PLAYING;
+  beepStart();
+  newBreakoutGame();
+}
+
+void applyRemoteBreakoutLoss() {
+  activeNetworkGame = NETWORK_GAME_BREAKOUT;
+
+  if (appState != STATE_BREAKOUT_PLAYING || breakoutGameOver) {
+    return;
+  }
+
+  finishBreakoutRound(true);
+}
+
 void drawBreakoutMenuScreen() {
+  activeNetworkGame = NETWORK_GAME_BREAKOUT;
   localGame = false;
   appState = STATE_BREAKOUT;
-  gfx->fillScreen(RGB565_BLACK);
+  drawBreakoutArcadeHome();
 
-  drawCenteredText("BREAKOUT", 35, 3, RGB565_WHITE);
-  drawCenteredText("LOCAL / NETWORK", 75, 2, RGB565_CYAN);
+  drawTransparentArcadeButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH, "LOCAL", 2);
 
-  drawButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH,
-             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "LOCAL", 2);
+  drawTransparentArcadeButton(btnHostX, btnHostY, btnHostW, btnHostH, "HOST", 2);
 
-  drawButton(btnHostX, btnHostY, btnHostW, btnHostH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "HOST", 2);
+  drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN", 2);
 
-  drawButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "JOIN", 2);
-
-  drawButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH,
-             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "BACK", 2);
+  drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
 }
 
 void drawBreakoutPlaceholderScreen(const char *title) {
@@ -3014,16 +3149,19 @@ void drawPocketTanksPlaceholderScreen(const char *title) {
 void drawWaitingHostScreen() {
   bool rpsNetworkGame = (activeNetworkGame == NETWORK_GAME_RPS);
   bool tanksNetworkGame = (activeNetworkGame == NETWORK_GAME_PT);
+  bool breakoutNetworkGame = (activeNetworkGame == NETWORK_GAME_BREAKOUT);
 
   gfx->fillScreen(RGB565_BLACK);
 
-  if (tanksNetworkGame) {
+  if (breakoutNetworkGame) {
+    drawCenteredText("BREAKOUT HOST", 28, 2, RGB565_GREEN);
+  } else if (tanksNetworkGame) {
     drawCenteredText("TANKS HOST", 28, 3, RGB565_GREEN);
   } else {
     drawCenteredText(rpsNetworkGame ? "RPS HOST" : "HOST ACTIV", 28, 3, RGB565_GREEN);
   }
 
-  drawCenteredText((rpsNetworkGame || tanksNetworkGame) ? "Tu esti P1" : "Tu esti X", 72, 2, RGB565_WHITE);
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame) ? "Tu esti P1" : "Tu esti X", 72, 2, RGB565_WHITE);
 
   drawCenteredText("Asteapta oponentul", 118, 2, RGB565_YELLOW);
   drawCenteredText("sa intre cu JOIN", 145, 2, RGB565_YELLOW);
@@ -3044,16 +3182,19 @@ void drawWaitingHostScreen() {
 void drawConnectingJoinScreen() {
   bool rpsNetworkGame = (activeNetworkGame == NETWORK_GAME_RPS);
   bool tanksNetworkGame = (activeNetworkGame == NETWORK_GAME_PT);
+  bool breakoutNetworkGame = (activeNetworkGame == NETWORK_GAME_BREAKOUT);
 
   gfx->fillScreen(RGB565_BLACK);
 
-  if (tanksNetworkGame) {
+  if (breakoutNetworkGame) {
+    drawCenteredText("BREAKOUT JOIN", 70, 2, RGB565_BLUE);
+  } else if (tanksNetworkGame) {
     drawCenteredText("TANKS JOIN", 70, 3, RGB565_BLUE);
   } else {
     drawCenteredText(rpsNetworkGame ? "RPS JOIN" : "JOIN", 70, 3, RGB565_BLUE);
   }
 
-  drawCenteredText((rpsNetworkGame || tanksNetworkGame) ? "Tu esti P2" : "Tu esti O", 120, 2, RGB565_WHITE);
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame) ? "Tu esti P2" : "Tu esti O", 120, 2, RGB565_WHITE);
 
   drawCenteredText("Connecting...", 190, 2, RGB565_YELLOW);
 
@@ -3253,6 +3394,7 @@ void drawHostIpScreen() {
 
 void startRpsNetworkGame();
 void startPocketTanksNetworkGame();
+void startBreakoutNetworkGame();
 
 // ============================================================================
 // NETWORK
@@ -3261,6 +3403,7 @@ void startPocketTanksNetworkGame();
 const char *getNetworkGameCode() {
   if (activeNetworkGame == NETWORK_GAME_RPS) return "RPS";
   if (activeNetworkGame == NETWORK_GAME_PT) return "PT";
+  if (activeNetworkGame == NETWORK_GAME_BREAKOUT) return "BRK";
   return "TTT";
 }
 
@@ -3284,6 +3427,8 @@ void applyNetworkGameCode(const String &code) {
         ptNetworkSeed = receivedSeed;
       }
     }
+  } else if (gameCode == "BRK") {
+    activeNetworkGame = NETWORK_GAME_BREAKOUT;
   } else if (gameCode == "TTT") {
     activeNetworkGame = NETWORK_GAME_TTT;
   }
@@ -3417,7 +3562,9 @@ void beginHostNetwork() {
   localGame = false;
   isHost = true;
   myPlayer = (activeNetworkGame == NETWORK_GAME_TTT) ? 'X' : '1';
-  myTurn = (activeNetworkGame == NETWORK_GAME_TTT || activeNetworkGame == NETWORK_GAME_PT);
+  myTurn = (activeNetworkGame == NETWORK_GAME_TTT ||
+            activeNetworkGame == NETWORK_GAME_PT ||
+            activeNetworkGame == NETWORK_GAME_BREAKOUT);
 
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(HOST_IP, HOST_IP, IPAddress(255, 255, 255, 0));
@@ -3484,6 +3631,11 @@ void startNetworkGame() {
 
   if (activeNetworkGame == NETWORK_GAME_PT) {
     startPocketTanksNetworkGame();
+    return;
+  }
+
+  if (activeNetworkGame == NETWORK_GAME_BREAKOUT) {
+    startBreakoutNetworkGame();
     return;
   }
 
@@ -4007,6 +4159,8 @@ void returnToMenu(bool notifyPeer) {
     drawRpsMenuScreen();
   } else if (activeNetworkGame == NETWORK_GAME_PT) {
     drawPocketTanksMenuScreen();
+  } else if (activeNetworkGame == NETWORK_GAME_BREAKOUT) {
+    drawBreakoutMenuScreen();
   } else {
     appState = STATE_MENU;
     drawMenuScreen();
@@ -4028,7 +4182,8 @@ void returnToHome(bool notifyPeer) {
 // NETWORK MESSAGES
 // ============================================================================
 // Text protocol over TCP. Messages are line-based and intentionally simple:
-// START:<game>, NEW:<game>, MOVE:col,row, RPS_CHOICE:n, PT_* messages, LEAVE.
+// START:<game>, NEW:<game>, MOVE:col,row, RPS_CHOICE:n, PT_* messages,
+// BR_LOSE, LEAVE.
 void handleNetMessage(String msg) {
   msg.trim();
 
@@ -4063,6 +4218,12 @@ void handleNetMessage(String msg) {
     activeNetworkGame = NETWORK_GAME_RPS;
     int choice = msg.substring(11).toInt();
     applyRemoteRpsChoice(choice);
+    return;
+  }
+
+  if (msg == "BR_LOSE") {
+    activeNetworkGame = NETWORK_GAME_BREAKOUT;
+    applyRemoteBreakoutLoss();
     return;
   }
 
@@ -4128,7 +4289,8 @@ void pollNetwork() {
     if (appState == STATE_PLAYING || appState == STATE_RESULT ||
         appState == STATE_RPS_CHOICE_P1 || appState == STATE_RPS_CHOICE_P2 ||
         appState == STATE_RPS_WAITING_CHOICE || appState == STATE_RPS_RESULT ||
-        appState == STATE_PT_PLAYING || appState == STATE_PT_RESULT) {
+        appState == STATE_PT_PLAYING || appState == STATE_PT_RESULT ||
+        appState == STATE_BREAKOUT_PLAYING) {
       gfx->fillScreen(RGB565_BLACK);
       drawCenteredText("Conexiune pierduta", 180, 2, RGB565_RED);
       delay(1200);
@@ -4317,14 +4479,16 @@ void handleBreakoutMenuTouch(int x, int y) {
   }
 
   if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
-    beepClick();
-    drawBreakoutPlaceholderScreen("BREAKOUT HOST");
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_BREAKOUT;
+    startHostMode();
     return;
   }
 
   if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
-    beepClick();
-    drawBreakoutPlaceholderScreen("BREAKOUT JOIN");
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_BREAKOUT;
+    startJoinMode();
     return;
   }
 
@@ -4346,12 +4510,21 @@ void handleBreakoutPlaceholderTouch(int x, int y) {
 void handleBreakoutPlayingTouch(int x, int y) {
   if (inRect(x, y, btnBreakoutMenuX, btnBreakoutMenuY, btnBreakoutMenuW, btnBreakoutMenuH)) {
     beepClick();
-    drawBreakoutMenuScreen();
+    if (localGame) {
+      drawBreakoutMenuScreen();
+    } else {
+      returnToMenu(true);
+    }
     return;
   }
 
   if (breakoutGameOver) {
-    newBreakoutGame();
+    if (localGame) {
+      newBreakoutGame();
+    } else {
+      sendNetMessage(buildNetworkMessage("NEW"));
+      startNetworkGame();
+    }
     return;
   }
 }
