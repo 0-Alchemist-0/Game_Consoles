@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 5.5 - 2026-06-17 19:24 - Added a generated arcade HOME fallback
+// screen when SD home assets are missing.
 // Version 5.4 - 2026-06-16 22:19 - Renamed user-facing artillery game text to
 // Tanks Wars across menus, placeholders, and screen titles.
 // Version 5.3 - 2026-06-03 22:20 - Added SD-loaded Rock-Paper-Scissors menu
@@ -133,8 +135,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 5.4";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V54-2026061622";
+const char *APP_VERSION_TEXT = "Version 5.5";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V55-2026061719";
 
 
 
@@ -1172,6 +1174,33 @@ void drawGamesArcadeTitle() {
   gfx->drawCircle(274, 114, 8, RGB565_CYAN);
 }
 
+void drawHomeArcadeTitle() {
+  uint16_t signFill = rgb888to565(12, 12, 35);
+  uint16_t arcadeOrange = rgb888to565(255, 128, 0);
+  uint16_t arcadeBlue = rgb888to565(0, 65, 210);
+  uint16_t arcadeMagenta = rgb888to565(255, 0, 180);
+
+  gfx->fillRoundRect(18, 18, 284, 82, 10, signFill);
+  gfx->drawRoundRect(18, 18, 284, 82, 10, arcadeMagenta);
+  gfx->drawRoundRect(22, 22, 276, 74, 8, RGB565_CYAN);
+  gfx->drawRoundRect(26, 26, 268, 66, 7, arcadeOrange);
+
+  for (int x = 36; x < 286; x += 18) {
+    gfx->fillCircle(x, 29, 3, arcadeOrange);
+    gfx->drawCircle(x, 29, 4, RGB565_YELLOW);
+    gfx->fillCircle(x, 89, 3, arcadeBlue);
+    gfx->drawCircle(x, 89, 4, RGB565_CYAN);
+  }
+
+  drawPixelText("HOME", 112, 43, 4, RGB565_YELLOW, RGB565_RED);
+  drawPixelText("MAIN MENU", 106, 108, 2, RGB565_CYAN, arcadeBlue);
+
+  gfx->fillCircle(46, 114, 7, RGB565_RED);
+  gfx->drawCircle(46, 114, 8, RGB565_YELLOW);
+  gfx->fillCircle(274, 114, 7, arcadeBlue);
+  gfx->drawCircle(274, 114, 8, RGB565_CYAN);
+}
+
 void drawTicTacToeArcadeHome() {
   if (sdReady && SD.exists(TTT_BACKGROUND_PATH)) {
     if (drawRaw565ImageFromSD(TTT_BACKGROUND_PATH, 0, 0, screenW, screenH)) {
@@ -1199,6 +1228,14 @@ void drawGamesArcadeBackground() {
   drawArcadeCabinets();
   drawArcadeFloor();
   drawGamesArcadeTitle();
+}
+
+void drawHomeArcadeBackground() {
+  fillArcadeGradient();
+  drawArcadeStars();
+  drawArcadeCabinets();
+  drawArcadeFloor();
+  drawHomeArcadeTitle();
 }
 
 void drawRpsHomeGradientBackground() {
@@ -2588,14 +2625,12 @@ void drawHomeScreen() {
   bool backgroundDrawn = false;
 
   if (sdReady) {
-    // Home screen uses SD artwork first, then falls back to simple drawn buttons.
+    // Home screen uses SD artwork first, then falls back to generated arcade UI.
     backgroundDrawn = drawRaw565ImageFromSD("/home_screen/background.raw", 0, 0, screenW, screenH);
   }
 
   if (!backgroundDrawn) {
-    gfx->fillScreen(RGB565_BLACK);
-    drawCenteredText("HOME", 80, 3, RGB565_WHITE);
-    drawCenteredText("Missing /home_screen files", 125, 1, RGB565_YELLOW);
+    drawHomeArcadeBackground();
   }
 
   bool gamesDrawn = false;
