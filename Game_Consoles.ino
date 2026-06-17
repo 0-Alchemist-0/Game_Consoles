@@ -1,6 +1,11 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 5.8 - 2026-06-17 20:15 - Added a generated arcade fallback
+// background for the Tanks Wars menu and switched its menu buttons to the
+// transparent Tic Tac Toe arcade text style.
+// Version 5.7 - 2026-06-17 20:09 - Added a second Games page with Breakout and
+// a Breakout mode menu containing Local, Host, Join, and Back.
 // Version 5.6 - 2026-06-17 19:30 - Added Host/Join network gameplay for Tanks
 // Wars with synced terrain seed, controls, turns, and firing.
 // Version 5.5 - 2026-06-17 19:24 - Added a generated arcade HOME fallback
@@ -137,8 +142,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 5.6";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V56-2026061719";
+const char *APP_VERSION_TEXT = "Version 5.8";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V58-2026061720";
 
 
 
@@ -222,6 +227,7 @@ bool sdReady = false;
 enum AppState {
   STATE_HOME,
   STATE_GAMES,
+  STATE_GAMES_MORE,
   STATE_ROCK_PAPER_SCISSORS,
   STATE_RPS_CHOICE_P1,
   STATE_RPS_CHOICE_P2,
@@ -232,6 +238,8 @@ enum AppState {
   STATE_PT_PLAYING,
   STATE_PT_RESULT,
   STATE_PT_PLACEHOLDER,
+  STATE_BREAKOUT,
+  STATE_BREAKOUT_PLACEHOLDER,
   STATE_EMPTY_GAME,
   STATE_MENU,
   STATE_SETTINGS,
@@ -395,6 +403,10 @@ const int btnGamesHomeY = 390;
 const int btnGamesW = 250;
 const int btnGamesH = 52;
 const int btnGamesHomeH = 45;
+const int btnGamesNavLeftX = 35;
+const int btnGamesNavRightX = 170;
+const int btnGamesNavW = 115;
+const int btnGamesBreakoutY = 205;
 
 const int btnEmptyBackX = 90;
 const int btnEmptyBackY = 420;
@@ -1493,6 +1505,93 @@ void drawRpsArcadeHome() {
   gfx->drawRoundRect(5, 5, screenW - 10, screenH - 10, 8, rgb888to565(30, 0, 70));
 }
 
+void drawTanksWarsTitleSign() {
+  uint16_t signFill = rgb888to565(12, 10, 28);
+  uint16_t arcadeOrange = rgb888to565(255, 128, 0);
+  uint16_t arcadeBlue = rgb888to565(0, 65, 210);
+  uint16_t arcadeMagenta = rgb888to565(255, 0, 180);
+  uint16_t tankGreen = rgb888to565(80, 180, 70);
+
+  gfx->fillRoundRect(16, 18, 288, 96, 10, signFill);
+  gfx->drawRoundRect(16, 18, 288, 96, 10, tankGreen);
+  gfx->drawRoundRect(20, 22, 280, 88, 8, RGB565_CYAN);
+  gfx->drawRoundRect(24, 26, 272, 80, 7, arcadeOrange);
+
+  for (int x = 36; x < 286; x += 20) {
+    gfx->fillCircle(x, 31, 3, arcadeOrange);
+    gfx->drawCircle(x, 31, 4, RGB565_YELLOW);
+    gfx->fillCircle(x, 101, 3, arcadeBlue);
+    gfx->drawCircle(x, 101, 4, RGB565_CYAN);
+  }
+
+  drawPixelText("TANKS", 66, 39, 4, RGB565_YELLOW, RGB565_RED);
+  drawPixelText("WARS", 92, 73, 4, RGB565_CYAN, arcadeBlue);
+
+  gfx->fillCircle(44, 120, 6, arcadeMagenta);
+  gfx->drawCircle(44, 120, 7, RGB565_YELLOW);
+  gfx->fillCircle(276, 120, 6, arcadeMagenta);
+  gfx->drawCircle(276, 120, 7, RGB565_YELLOW);
+}
+
+void drawTanksWarsTankDecor(int x, int y, bool facingRight, uint16_t bodyColor) {
+  int dir = facingRight ? 1 : -1;
+  uint16_t trackColor = rgb888to565(22, 24, 28);
+
+  gfx->fillRoundRect(x - 22, y + 8, 44, 10, 5, trackColor);
+  gfx->drawRoundRect(x - 22, y + 8, 44, 10, 5, RGB565_WHITE);
+
+  for (int i = -14; i <= 14; i += 14) {
+    gfx->fillCircle(x + i, y + 13, 4, rgb888to565(70, 80, 80));
+  }
+
+  gfx->fillRoundRect(x - 16, y, 32, 12, 4, bodyColor);
+  gfx->drawRoundRect(x - 16, y, 32, 12, 4, RGB565_WHITE);
+  gfx->fillCircle(x, y, 6, RGB565_YELLOW);
+
+  for (int offset = -1; offset <= 1; offset++) {
+    gfx->drawLine(x, y - 1 + offset, x + dir * 28, y - 16 + offset, RGB565_YELLOW);
+  }
+}
+
+void drawTanksWarsBattlefieldDecor() {
+  uint16_t ridgeA = rgb888to565(28, 78, 48);
+  uint16_t ridgeB = rgb888to565(42, 118, 58);
+  uint16_t arcadeBlue = rgb888to565(0, 65, 210);
+
+  for (int x = 0; x < screenW; x += 8) {
+    int y = 338 + (int)(sin((float)x * 0.055f) * 12.0f);
+    gfx->fillRect(x, y, 8, 28, (x % 16 == 0) ? ridgeA : ridgeB);
+  }
+
+  for (int x = 0; x < screenW; x += 22) {
+    gfx->drawLine(160, 365, x, screenH - 1, rgb888to565(18, 22, 70));
+  }
+
+  gfx->drawLine(0, 365, screenW - 1, 365, arcadeBlue);
+
+  drawTanksWarsTankDecor(58, 320, true, RGB565_RED);
+  drawTanksWarsTankDecor(262, 320, false, RGB565_BLUE);
+
+  for (int i = 0; i < 14; i++) {
+    int px = 86 + i * 11;
+    int py = 260 - (int)(sin((float)i * 0.24f) * 24.0f);
+    gfx->drawPixel(px, py, RGB565_YELLOW);
+
+    if (i % 3 == 0) {
+      gfx->drawCircle(px, py, 2, RGB565_RED);
+    }
+  }
+}
+
+void drawTanksWarsArcadeHome() {
+  fillArcadeGradient();
+  drawArcadeStars();
+  drawArcadeCabinets();
+  drawArcadeFloor();
+  drawTanksWarsBattlefieldDecor();
+  drawTanksWarsTitleSign();
+}
+
 void drawTransparentArcadeButton(int x, int y, int w, int h, const char *label, int textSize) {
   uint16_t mainTextColor = RGB565_YELLOW;
   uint16_t secondTextColor = RGB565_RED;
@@ -2372,7 +2471,20 @@ void drawGamesScreen() {
 
   drawTransparentArcadeButton(btnGamesX, btnGamesPocketTanksY, btnGamesW, btnGamesH, "Tanks Wars", 2);
 
-  drawTransparentArcadeButton(btnGamesX, btnGamesHomeY, btnGamesW, btnGamesHomeH, "HOME", 2);
+  drawTransparentArcadeButton(btnGamesNavLeftX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "HOME", 2);
+
+  drawTransparentArcadeButton(btnGamesNavRightX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "MORE", 2);
+}
+
+void drawGamesMoreScreen() {
+  appState = STATE_GAMES_MORE;
+  drawGamesArcadeBackground();
+
+  drawTransparentArcadeButton(btnGamesX, btnGamesBreakoutY, btnGamesW, btnGamesH, "BREAKOUT", 2);
+
+  drawTransparentArcadeButton(btnGamesNavLeftX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "BACK", 2);
+
+  drawTransparentArcadeButton(btnGamesNavRightX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "HOME", 2);
 }
 
 void drawRpsMenuScreen() {
@@ -2477,18 +2589,12 @@ void drawEmptyGameScreen(const char *title, int state) {
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
 }
 
-void drawPocketTanksMenuScreen() {
-  activeNetworkGame = NETWORK_GAME_PT;
-  localGame = false;
-  appState = STATE_POCKET_TANKS;
+void drawBreakoutMenuScreen() {
+  appState = STATE_BREAKOUT;
   gfx->fillScreen(RGB565_BLACK);
 
-  drawCenteredText("Tanks Wars", 35, 3, RGB565_WHITE);
+  drawCenteredText("BREAKOUT", 35, 3, RGB565_WHITE);
   drawCenteredText("LOCAL / NETWORK", 75, 2, RGB565_CYAN);
-
-  char scoreLine[48];
-  snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d", ptScoreP1, ptScoreP2);
-  drawCenteredText(scoreLine, 120, 2, RGB565_YELLOW);
 
   drawButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH,
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "LOCAL", 2);
@@ -2499,11 +2605,40 @@ void drawPocketTanksMenuScreen() {
   drawButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "JOIN", 2);
 
-  drawButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH,
-             RGB565_RED, RGB565_WHITE, RGB565_WHITE, "RESET SCOR", 2);
-
   drawButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH,
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "BACK", 2);
+}
+
+void drawBreakoutPlaceholderScreen(const char *title) {
+  appState = STATE_BREAKOUT_PLACEHOLDER;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText(title, 105, 2, RGB565_CYAN);
+  drawCenteredText("coming soon", 150, 2, RGB565_YELLOW);
+
+  drawButton(btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+}
+
+void drawPocketTanksMenuScreen() {
+  activeNetworkGame = NETWORK_GAME_PT;
+  localGame = false;
+  appState = STATE_POCKET_TANKS;
+  drawTanksWarsArcadeHome();
+
+  drawTransparentArcadeButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH, "LOCAL", 2);
+
+  drawTransparentArcadeButton(btnHostX, btnHostY, btnHostW, btnHostH, "HOST", 2);
+
+  drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN", 2);
+
+  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCOR", 2);
+
+  drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
+
+  char scoreLine[48];
+  snprintf(scoreLine, sizeof(scoreLine), "SCORE  P1:%d  P2:%d", ptScoreP1, ptScoreP2);
+  drawCenteredTextWithShadow(scoreLine, 462, 1, RGB565_WHITE, RGB565_BLACK);
 }
 
 void drawPocketTanksGameScreen() {
@@ -3765,7 +3900,33 @@ void handleGamesTouch(int x, int y) {
     return;
   }
 
-  if (inRect(x, y, btnGamesX, btnGamesHomeY, btnGamesW, btnGamesHomeH)) {
+  if (inRect(x, y, btnGamesNavLeftX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH)) {
+    beepClick();
+    returnToHome(false);
+    return;
+  }
+
+  if (inRect(x, y, btnGamesNavRightX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH)) {
+    beepClick();
+    drawGamesMoreScreen();
+    return;
+  }
+}
+
+void handleGamesMoreTouch(int x, int y) {
+  if (inRect(x, y, btnGamesX, btnGamesBreakoutY, btnGamesW, btnGamesH)) {
+    beepClick();
+    drawBreakoutMenuScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnGamesNavLeftX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH)) {
+    beepClick();
+    drawGamesScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnGamesNavRightX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH)) {
     beepClick();
     returnToHome(false);
     return;
@@ -3818,6 +3979,40 @@ void handlePocketTanksPlaceholderTouch(int x, int y) {
   if (inRect(x, y, btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH)) {
     beepClick();
     drawPocketTanksMenuScreen();
+    return;
+  }
+}
+
+void handleBreakoutMenuTouch(int x, int y) {
+  if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
+    beepClick();
+    drawBreakoutPlaceholderScreen("BREAKOUT LOCAL");
+    return;
+  }
+
+  if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
+    beepClick();
+    drawBreakoutPlaceholderScreen("BREAKOUT HOST");
+    return;
+  }
+
+  if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
+    beepClick();
+    drawBreakoutPlaceholderScreen("BREAKOUT JOIN");
+    return;
+  }
+
+  if (inRect(x, y, btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH)) {
+    beepClick();
+    drawGamesMoreScreen();
+    return;
+  }
+}
+
+void handleBreakoutPlaceholderTouch(int x, int y) {
+  if (inRect(x, y, btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH)) {
+    beepClick();
+    drawBreakoutMenuScreen();
     return;
   }
 }
@@ -4325,6 +4520,8 @@ void handleTouch(int x, int y) {
     handleHomeTouch(x, y);
   } else if (appState == STATE_GAMES) {
     handleGamesTouch(x, y);
+  } else if (appState == STATE_GAMES_MORE) {
+    handleGamesMoreTouch(x, y);
   } else if (appState == STATE_ROCK_PAPER_SCISSORS) {
     handleRpsMenuTouch(x, y);
   } else if (appState == STATE_RPS_CHOICE_P1 || appState == STATE_RPS_CHOICE_P2) {
@@ -4343,6 +4540,10 @@ void handleTouch(int x, int y) {
     handlePocketTanksResultTouch(x, y);
   } else if (appState == STATE_PT_PLACEHOLDER) {
     handlePocketTanksPlaceholderTouch(x, y);
+  } else if (appState == STATE_BREAKOUT) {
+    handleBreakoutMenuTouch(x, y);
+  } else if (appState == STATE_BREAKOUT_PLACEHOLDER) {
+    handleBreakoutPlaceholderTouch(x, y);
   } else if (appState == STATE_EMPTY_GAME) {
     handleEmptyGameTouch(x, y);
   } else if (appState == STATE_MENU) {
