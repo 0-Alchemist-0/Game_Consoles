@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 5.9 - 2026-06-17 20:37 - Implemented local portrait Breakout
+// gameplay with bricks, paddle, touch controls, lives, score, and restart.
 // Version 5.8 - 2026-06-17 20:15 - Added a generated arcade fallback
 // background for the Tanks Wars menu and switched its menu buttons to the
 // transparent Tic Tac Toe arcade text style.
@@ -142,8 +144,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 5.8";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V58-2026061720";
+const char *APP_VERSION_TEXT = "Version 5.9";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V59-2026061720";
 
 
 
@@ -239,6 +241,7 @@ enum AppState {
   STATE_PT_RESULT,
   STATE_PT_PLACEHOLDER,
   STATE_BREAKOUT,
+  STATE_BREAKOUT_PLAYING,
   STATE_BREAKOUT_PLACEHOLDER,
   STATE_EMPTY_GAME,
   STATE_MENU,
@@ -333,6 +336,59 @@ int ptScoreP2 = 0;
 int ptWinner = 0;
 unsigned long ptNetworkSeed = 1;
 const char *ptPlaceholderTitle = "Tanks Wars";
+
+// Breakout is implemented in portrait mode for the current 320x480 setup.
+// The bottom strip is reserved for touch controls, keeping gameplay above it.
+static const int BREAKOUT_SCREEN_W = 320;
+static const int BREAKOUT_SCREEN_H = 480;
+static const int BREAKOUT_HUD_H = 34;
+static const int BREAKOUT_PLAY_BOTTOM = 396;
+static const int BREAKOUT_BRICK_COLS = 8;
+static const int BREAKOUT_BRICK_ROWS = 6;
+static const int BREAKOUT_BRICK_W = 34;
+static const int BREAKOUT_BRICK_H = 16;
+static const int BREAKOUT_BRICK_GAP = 3;
+static const int BREAKOUT_BRICK_X0 = 20;
+static const int BREAKOUT_BRICK_Y0 = 54;
+static const int BREAKOUT_BALL_R = 4;
+static const int BREAKOUT_PADDLE_W = 72;
+static const int BREAKOUT_PADDLE_H = 10;
+static const int BREAKOUT_PADDLE_Y = 360;
+static const int BREAKOUT_PADDLE_SPEED = 8;
+static const unsigned long BREAKOUT_FRAME_MS = 20;
+
+const int btnBreakoutLeftX = 18;
+const int btnBreakoutLeftY = 410;
+const int btnBreakoutLeftW = 88;
+const int btnBreakoutLeftH = 52;
+
+const int btnBreakoutRightX = 214;
+const int btnBreakoutRightY = 410;
+const int btnBreakoutRightW = 88;
+const int btnBreakoutRightH = 52;
+
+const int btnBreakoutMenuX = 116;
+const int btnBreakoutMenuY = 422;
+const int btnBreakoutMenuW = 88;
+const int btnBreakoutMenuH = 36;
+
+bool breakoutBricks[BREAKOUT_BRICK_ROWS][BREAKOUT_BRICK_COLS];
+float breakoutBallX = 0.0;
+float breakoutBallY = 0.0;
+float breakoutBallVX = 0.0;
+float breakoutBallVY = 0.0;
+int breakoutOldBallX = -1;
+int breakoutOldBallY = -1;
+int breakoutPaddleX = 0;
+int breakoutOldPaddleX = -1;
+int breakoutScore = 0;
+int breakoutLives = 3;
+bool breakoutGameOver = false;
+bool breakoutWin = false;
+bool breakoutTouchDown = false;
+int breakoutTouchX = -1;
+int breakoutTouchY = -1;
+unsigned long breakoutLastFrame = 0;
 
 // Touch edge detection and debounce. Touch actions fire once per press, not on
 // every loop while the finger is still down.
@@ -2589,7 +2645,278 @@ void drawEmptyGameScreen(const char *title, int state) {
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
 }
 
+// ============================================================================
+// BREAKOUT GAME
+// ============================================================================
+// Portrait adaptation of the standalone Breakout sketch. The game uses a
+// fixed-time update, simple AABB collisions, and large touch zones for control.
+uint16_t breakoutBrickColor(int row) {
+  if (row == 0) return rgb888to565(230, 40, 30);
+  if (row == 1) return rgb888to565(240, 130, 20);
+  if (row == 2) return rgb888to565(240, 220, 20);
+  if (row == 3) return rgb888to565(30, 220, 40);
+  if (row == 4) return rgb888to565(20, 90, 220);
+  return rgb888to565(150, 70, 230);
+}
+
+void drawBreakoutHud() {
+  gfx->fillRect(0, 0, BREAKOUT_SCREEN_W, BREAKOUT_HUD_H, RGB565_BLACK);
+  gfx->drawLine(0, BREAKOUT_HUD_H, BREAKOUT_SCREEN_W - 1, BREAKOUT_HUD_H, RGB565_BLUE);
+
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_GREEN);
+  gfx->setCursor(8, 9);
+  gfx->print("SCORE ");
+  gfx->print(breakoutScore);
+
+  gfx->setTextColor(RGB565_RED);
+  gfx->setCursor(210, 9);
+  gfx->print("LIVES ");
+  gfx->print(breakoutLives);
+}
+
+void drawBreakoutControls() {
+  gfx->fillRect(0, BREAKOUT_PLAY_BOTTOM + 1, BREAKOUT_SCREEN_W,
+                BREAKOUT_SCREEN_H - BREAKOUT_PLAY_BOTTOM - 1, RGB565_BLACK);
+  gfx->drawLine(0, BREAKOUT_PLAY_BOTTOM, BREAKOUT_SCREEN_W - 1,
+                BREAKOUT_PLAY_BOTTOM, RGB565_BLUE);
+
+  drawButton(btnBreakoutLeftX, btnBreakoutLeftY, btnBreakoutLeftW, btnBreakoutLeftH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "<", 3);
+
+  drawButton(btnBreakoutRightX, btnBreakoutRightY, btnBreakoutRightW, btnBreakoutRightH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, ">", 3);
+
+  drawButton(btnBreakoutMenuX, btnBreakoutMenuY, btnBreakoutMenuW, btnBreakoutMenuH,
+             RGB565_RED, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
+}
+
+void drawBreakoutBrick(int row, int col) {
+  int bx = BREAKOUT_BRICK_X0 + col * (BREAKOUT_BRICK_W + BREAKOUT_BRICK_GAP);
+  int by = BREAKOUT_BRICK_Y0 + row * (BREAKOUT_BRICK_H + BREAKOUT_BRICK_GAP);
+
+  if (breakoutBricks[row][col]) {
+    gfx->fillRect(bx, by, BREAKOUT_BRICK_W, BREAKOUT_BRICK_H, breakoutBrickColor(row));
+    gfx->drawRect(bx, by, BREAKOUT_BRICK_W, BREAKOUT_BRICK_H, RGB565_BLACK);
+  } else {
+    gfx->fillRect(bx, by, BREAKOUT_BRICK_W, BREAKOUT_BRICK_H, RGB565_BLACK);
+  }
+}
+
+void drawBreakoutBricks() {
+  for (int r = 0; r < BREAKOUT_BRICK_ROWS; r++) {
+    for (int c = 0; c < BREAKOUT_BRICK_COLS; c++) {
+      drawBreakoutBrick(r, c);
+    }
+  }
+}
+
+bool breakoutHasBricksLeft() {
+  for (int r = 0; r < BREAKOUT_BRICK_ROWS; r++) {
+    for (int c = 0; c < BREAKOUT_BRICK_COLS; c++) {
+      if (breakoutBricks[r][c]) return true;
+    }
+  }
+
+  return false;
+}
+
+void resetBreakoutBall() {
+  breakoutBallX = BREAKOUT_SCREEN_W / 2;
+  breakoutBallY = BREAKOUT_PADDLE_Y - 22;
+  breakoutBallVX = 2.8;
+  breakoutBallVY = -3.4;
+  breakoutOldBallX = -1;
+  breakoutOldBallY = -1;
+}
+
+void drawBreakoutEntities() {
+  if (breakoutOldBallX >= 0) {
+    gfx->fillCircle(breakoutOldBallX, breakoutOldBallY, BREAKOUT_BALL_R + 1, RGB565_BLACK);
+  }
+
+  if (breakoutOldPaddleX >= 0 && breakoutOldPaddleX != breakoutPaddleX) {
+    gfx->fillRect(breakoutOldPaddleX, BREAKOUT_PADDLE_Y,
+                  BREAKOUT_PADDLE_W, BREAKOUT_PADDLE_H, RGB565_BLACK);
+  }
+
+  gfx->fillRect(breakoutPaddleX, BREAKOUT_PADDLE_Y,
+                BREAKOUT_PADDLE_W, BREAKOUT_PADDLE_H, RGB565_WHITE);
+  gfx->fillRect(breakoutPaddleX + 5, BREAKOUT_PADDLE_Y + 2,
+                BREAKOUT_PADDLE_W - 10, BREAKOUT_PADDLE_H - 4, RGB565_RED);
+
+  gfx->fillCircle((int)breakoutBallX, (int)breakoutBallY,
+                  BREAKOUT_BALL_R, RGB565_WHITE);
+
+  breakoutOldPaddleX = breakoutPaddleX;
+  breakoutOldBallX = (int)breakoutBallX;
+  breakoutOldBallY = (int)breakoutBallY;
+}
+
+void drawBreakoutEndOverlay() {
+  gfx->fillRoundRect(24, 178, 272, 124, 10, RGB565_BLACK);
+  gfx->drawRoundRect(24, 178, 272, 124, 10, RGB565_YELLOW);
+
+  drawCenteredText(breakoutWin ? "YOU WIN" : "GAME OVER", 205, 3,
+                   breakoutWin ? RGB565_GREEN : RGB565_YELLOW);
+
+  char scoreLine[32];
+  snprintf(scoreLine, sizeof(scoreLine), "Score %d", breakoutScore);
+  drawCenteredText(scoreLine, 248, 2, RGB565_WHITE);
+  drawCenteredText("Tap to restart", 280, 1, RGB565_CYAN);
+}
+
+void finishBreakoutRound(bool won) {
+  breakoutGameOver = true;
+  breakoutWin = won;
+  drawBreakoutHud();
+  drawBreakoutEndOverlay();
+
+  if (won) {
+    beepWin();
+  } else {
+    beepDraw();
+  }
+}
+
+void newBreakoutGame() {
+  breakoutScore = 0;
+  breakoutLives = 3;
+  breakoutGameOver = false;
+  breakoutWin = false;
+  breakoutPaddleX = (BREAKOUT_SCREEN_W - BREAKOUT_PADDLE_W) / 2;
+  breakoutOldPaddleX = -1;
+
+  for (int r = 0; r < BREAKOUT_BRICK_ROWS; r++) {
+    for (int c = 0; c < BREAKOUT_BRICK_COLS; c++) {
+      breakoutBricks[r][c] = true;
+    }
+  }
+
+  gfx->fillScreen(RGB565_BLACK);
+  drawBreakoutHud();
+  drawBreakoutBricks();
+  drawBreakoutControls();
+  resetBreakoutBall();
+  drawBreakoutEntities();
+  breakoutLastFrame = millis();
+}
+
+void updateBreakoutGame() {
+  if (appState != STATE_BREAKOUT_PLAYING) return;
+
+  unsigned long now = millis();
+  if (now - breakoutLastFrame < BREAKOUT_FRAME_MS) return;
+  breakoutLastFrame = now;
+
+  if (breakoutGameOver) return;
+
+  if (breakoutTouchDown &&
+      inRect(breakoutTouchX, breakoutTouchY,
+             btnBreakoutLeftX, btnBreakoutLeftY, btnBreakoutLeftW, btnBreakoutLeftH)) {
+    breakoutPaddleX -= BREAKOUT_PADDLE_SPEED;
+  }
+
+  if (breakoutTouchDown &&
+      inRect(breakoutTouchX, breakoutTouchY,
+             btnBreakoutRightX, btnBreakoutRightY, btnBreakoutRightW, btnBreakoutRightH)) {
+    breakoutPaddleX += BREAKOUT_PADDLE_SPEED;
+  }
+
+  breakoutPaddleX = constrain(breakoutPaddleX, 4,
+                              BREAKOUT_SCREEN_W - BREAKOUT_PADDLE_W - 4);
+
+  breakoutBallX += breakoutBallVX;
+  breakoutBallY += breakoutBallVY;
+
+  if (breakoutBallX <= BREAKOUT_BALL_R) {
+    breakoutBallX = BREAKOUT_BALL_R;
+    breakoutBallVX = -breakoutBallVX;
+    beepClick();
+  } else if (breakoutBallX >= BREAKOUT_SCREEN_W - BREAKOUT_BALL_R) {
+    breakoutBallX = BREAKOUT_SCREEN_W - BREAKOUT_BALL_R;
+    breakoutBallVX = -breakoutBallVX;
+    beepClick();
+  }
+
+  if (breakoutBallY <= BREAKOUT_HUD_H + BREAKOUT_BALL_R) {
+    breakoutBallY = BREAKOUT_HUD_H + BREAKOUT_BALL_R;
+    breakoutBallVY = -breakoutBallVY;
+    beepClick();
+  }
+
+  if (breakoutBallVY > 0 &&
+      breakoutBallY + BREAKOUT_BALL_R >= BREAKOUT_PADDLE_Y &&
+      breakoutBallY - BREAKOUT_BALL_R <= BREAKOUT_PADDLE_Y + BREAKOUT_PADDLE_H &&
+      breakoutBallX >= breakoutPaddleX - BREAKOUT_BALL_R &&
+      breakoutBallX <= breakoutPaddleX + BREAKOUT_PADDLE_W + BREAKOUT_BALL_R) {
+    breakoutBallY = BREAKOUT_PADDLE_Y - BREAKOUT_BALL_R;
+    breakoutBallVY = -breakoutBallVY;
+
+    float offset = (breakoutBallX - (breakoutPaddleX + BREAKOUT_PADDLE_W / 2.0)) /
+                   (BREAKOUT_PADDLE_W / 2.0);
+    breakoutBallVX = offset * 4.0;
+    beepMove();
+  }
+
+  bool hitBrick = false;
+  for (int r = 0; r < BREAKOUT_BRICK_ROWS && !hitBrick; r++) {
+    for (int c = 0; c < BREAKOUT_BRICK_COLS && !hitBrick; c++) {
+      if (!breakoutBricks[r][c]) continue;
+
+      int bx = BREAKOUT_BRICK_X0 + c * (BREAKOUT_BRICK_W + BREAKOUT_BRICK_GAP);
+      int by = BREAKOUT_BRICK_Y0 + r * (BREAKOUT_BRICK_H + BREAKOUT_BRICK_GAP);
+
+      if (breakoutBallX + BREAKOUT_BALL_R >= bx &&
+          breakoutBallX - BREAKOUT_BALL_R <= bx + BREAKOUT_BRICK_W &&
+          breakoutBallY + BREAKOUT_BALL_R >= by &&
+          breakoutBallY - BREAKOUT_BALL_R <= by + BREAKOUT_BRICK_H) {
+        breakoutBricks[r][c] = false;
+        breakoutScore += 10;
+        breakoutBallVY = -breakoutBallVY;
+        drawBreakoutBrick(r, c);
+        drawBreakoutHud();
+        beepStart();
+        hitBrick = true;
+      }
+    }
+  }
+
+  if (hitBrick && !breakoutHasBricksLeft()) {
+    drawBreakoutEntities();
+    finishBreakoutRound(true);
+    return;
+  }
+
+  if (breakoutBallY - BREAKOUT_BALL_R > BREAKOUT_PLAY_BOTTOM) {
+    if (breakoutOldBallX >= 0) {
+      gfx->fillCircle(breakoutOldBallX, breakoutOldBallY, BREAKOUT_BALL_R + 1, RGB565_BLACK);
+    }
+
+    breakoutLives--;
+    drawBreakoutHud();
+
+    if (breakoutLives <= 0) {
+      finishBreakoutRound(false);
+      return;
+    }
+
+    resetBreakoutBall();
+  }
+
+  drawBreakoutEntities();
+}
+
+void startBreakoutLocalGame() {
+  stopNetwork();
+  localGame = true;
+  appState = STATE_BREAKOUT_PLAYING;
+  beepStart();
+  newBreakoutGame();
+}
+
 void drawBreakoutMenuScreen() {
+  localGame = false;
   appState = STATE_BREAKOUT;
   gfx->fillScreen(RGB565_BLACK);
 
@@ -3985,8 +4312,7 @@ void handlePocketTanksPlaceholderTouch(int x, int y) {
 
 void handleBreakoutMenuTouch(int x, int y) {
   if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
-    beepClick();
-    drawBreakoutPlaceholderScreen("BREAKOUT LOCAL");
+    startBreakoutLocalGame();
     return;
   }
 
@@ -4013,6 +4339,19 @@ void handleBreakoutPlaceholderTouch(int x, int y) {
   if (inRect(x, y, btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH)) {
     beepClick();
     drawBreakoutMenuScreen();
+    return;
+  }
+}
+
+void handleBreakoutPlayingTouch(int x, int y) {
+  if (inRect(x, y, btnBreakoutMenuX, btnBreakoutMenuY, btnBreakoutMenuW, btnBreakoutMenuH)) {
+    beepClick();
+    drawBreakoutMenuScreen();
+    return;
+  }
+
+  if (breakoutGameOver) {
+    newBreakoutGame();
     return;
   }
 }
@@ -4542,6 +4881,8 @@ void handleTouch(int x, int y) {
     handlePocketTanksPlaceholderTouch(x, y);
   } else if (appState == STATE_BREAKOUT) {
     handleBreakoutMenuTouch(x, y);
+  } else if (appState == STATE_BREAKOUT_PLAYING) {
+    handleBreakoutPlayingTouch(x, y);
   } else if (appState == STATE_BREAKOUT_PLACEHOLDER) {
     handleBreakoutPlaceholderTouch(x, y);
   } else if (appState == STATE_EMPTY_GAME) {
@@ -4646,6 +4987,12 @@ void loop() {
   int tx, ty;
   bool touched = readTouchScreen(tx, ty);
 
+  breakoutTouchDown = touched;
+  if (touched) {
+    breakoutTouchX = tx;
+    breakoutTouchY = ty;
+  }
+
   if (touched && !touchWasDown) {
     unsigned long now = millis();
 
@@ -4665,6 +5012,8 @@ void loop() {
   if (!touched) {
     touchWasDown = false;
   }
+
+  updateBreakoutGame();
 
   delay(10);
 }
