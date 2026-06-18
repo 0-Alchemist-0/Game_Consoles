@@ -1,6 +1,9 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 7.5 - 2026-06-18 12:29 - Added Frogger to the Games menu with a
+// dedicated mode menu and local playable road, river, logs, cars, goals, and
+// high score gameplay.
 // Version 7.4 - 2026-06-18 10:41 - Added host-authoritative Ranch Rush network
 // gameplay with two visible differently colored players and synced ranch state.
 // Version 7.3 - 2026-06-18 10:26 - Fixed Ranch Rush lasso persistence by using
@@ -182,8 +185,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 7.4";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V74-2026061810";
+const char *APP_VERSION_TEXT = "Version 7.5";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V75-2026061812";
 
 
 
@@ -268,6 +271,7 @@ enum AppState {
   STATE_HOME,
   STATE_GAMES,
   STATE_GAMES_MORE,
+  STATE_GAMES_EXTRA,
   STATE_ROCK_PAPER_SCISSORS,
   STATE_RPS_CHOICE_P1,
   STATE_RPS_CHOICE_P2,
@@ -290,6 +294,9 @@ enum AppState {
   STATE_RANCH_RUSH,
   STATE_RR_PLAYING,
   STATE_RR_PLACEHOLDER,
+  STATE_FROGGER,
+  STATE_FROGGER_PLAYING,
+  STATE_FROGGER_PLACEHOLDER,
   STATE_EMPTY_GAME,
   STATE_MENU,
   STATE_SETTINGS,
@@ -315,7 +322,8 @@ enum NetworkGameType {
   NETWORK_GAME_BREAKOUT,
   NETWORK_GAME_PONG,
   NETWORK_GAME_SNAKE,
-  NETWORK_GAME_RANCH_RUSH
+  NETWORK_GAME_RANCH_RUSH,
+  NETWORK_GAME_FROGGER
 };
 
 NetworkGameType activeNetworkGame = NETWORK_GAME_TTT;
@@ -621,6 +629,59 @@ bool rrNetGameOver = false;
 int rrNetWinner = 0;
 bool rrRanchSceneReady = false;
 unsigned long rrLastStateSendTime = 0;
+
+// Frogger local gameplay: cross three road lanes, ride logs through three
+// water lanes, and fill all five goals to advance to the next level.
+static const int FROG_ROWS = 9;
+static const int FROG_LANES = 6;
+static const int FROG_MAX_OBJECTS = 4;
+static const int FROG_GOALS = 5;
+static const int FROG_HUD_H = 46;
+static const int FROG_FIELD_TOP = 48;
+static const int FROG_LANE_H = 38;
+static const int FROG_BTN_TOP = FROG_FIELD_TOP + FROG_ROWS * FROG_LANE_H + 2;
+static const int FROG_W = 26;
+static const int FROG_H = 26;
+static const int FROG_STEP_X = 32;
+static const unsigned long FROG_FRAME_MS = 33;
+
+const int btnFrogMenuX = 230;
+const int btnFrogMenuY = 6;
+const int btnFrogMenuW = 78;
+const int btnFrogMenuH = 28;
+
+struct FroggerObject {
+  float x;
+  int w;
+};
+
+struct FroggerLane {
+  int row;
+  float speed;
+  bool isWater;
+  uint16_t objColor;
+  int numObj;
+  FroggerObject objs[FROG_MAX_OBJECTS];
+};
+
+int frogRowY[FROG_ROWS];
+int frogGoalX[FROG_GOALS];
+bool frogGoalFilled[FROG_GOALS];
+FroggerLane frogLanes[FROG_LANES];
+float frogX = 0.0f;
+int frogRow = 0;
+float frogPrevX = 0.0f;
+int frogPrevRow = 0;
+bool frogAlive = true;
+bool frogJustJumped = false;
+int frogScore = 0;
+int frogLives = 3;
+int frogLevel = 1;
+uint32_t frogHiScore = 0;
+bool frogGameOver = false;
+bool frogDying = false;
+unsigned long frogDeathTime = 0;
+unsigned long frogLastFrame = 0;
 
 // Touch edge detection and debounce. Touch actions fire once per press, not on
 // every loop while the finger is still down.
@@ -1114,6 +1175,18 @@ void loadRanchRushScore() {
 void saveRanchRushScore() {
   prefs.begin("ranch", false);
   prefs.putULong("hiscore_ranch", rrHiScore);
+  prefs.end();
+}
+
+void loadFroggerScore() {
+  prefs.begin("frogger", true);
+  frogHiScore = prefs.getULong("hiscore_frog", 0);
+  prefs.end();
+}
+
+void saveFroggerScore() {
+  prefs.begin("frogger", false);
+  prefs.putULong("hiscore_frog", frogHiScore);
   prefs.end();
 }
 
@@ -3115,6 +3188,17 @@ void drawGamesMoreScreen() {
   drawTransparentArcadeButton(btnGamesX, btnGamesPongY, btnGamesW, btnGamesH, "PONG", 2);
 
   drawTransparentArcadeButton(btnGamesX, btnGamesRanchRushY, btnGamesW, btnGamesH, "RANCH RUSH", 2);
+
+  drawTransparentArcadeButton(btnGamesNavLeftX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "BACK", 2);
+
+  drawTransparentArcadeButton(btnGamesNavRightX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "MORE", 2);
+}
+
+void drawGamesExtraScreen() {
+  appState = STATE_GAMES_EXTRA;
+  drawGamesArcadeBackground();
+
+  drawTransparentArcadeButton(btnGamesX, btnGamesRpsY, btnGamesW, btnGamesH, "FROGGER", 2);
 
   drawTransparentArcadeButton(btnGamesNavLeftX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "BACK", 2);
 
@@ -5853,6 +5937,779 @@ void startRanchRushNetworkGame() {
   rrRanchSceneReady = false;
 }
 
+uint16_t froggerRowBg(int row) {
+  if (row == 0) return rgb888to565(30, 120, 30);
+  if (row >= 1 && row <= 3) return rgb888to565(60, 60, 60);
+  if (row == 4) return rgb888to565(50, 140, 50);
+  if (row >= 5 && row <= 7) return rgb888to565(20, 70, 190);
+  return rgb888to565(15, 70, 15);
+}
+
+int froggerLaneIndexForRow(int row) {
+  for (int i = 0; i < FROG_LANES; i++) {
+    if (frogLanes[i].row == row) return i;
+  }
+
+  return -1;
+}
+
+void initFroggerLayout() {
+  for (int r = 0; r < FROG_ROWS; r++) {
+    frogRowY[r] = FROG_FIELD_TOP + (FROG_ROWS - 1 - r) * FROG_LANE_H;
+  }
+
+  for (int g = 0; g < FROG_GOALS; g++) {
+    frogGoalX[g] = (screenW / FROG_GOALS) * g + (screenW / FROG_GOALS) / 2;
+  }
+}
+
+void initFroggerLanes() {
+  float speedMul = 1.0f + (frogLevel - 1) * 0.18f;
+
+  frogLanes[0].row = 1;
+  frogLanes[0].speed = -1.4f * speedMul;
+  frogLanes[0].isWater = false;
+  frogLanes[0].objColor = rgb888to565(230, 200, 0);
+  frogLanes[0].numObj = 3;
+  frogLanes[0].objs[0] = {30.0f, 40};
+  frogLanes[0].objs[1] = {150.0f, 40};
+  frogLanes[0].objs[2] = {280.0f, 40};
+
+  frogLanes[1].row = 2;
+  frogLanes[1].speed = 1.0f * speedMul;
+  frogLanes[1].isWater = false;
+  frogLanes[1].objColor = rgb888to565(60, 110, 230);
+  frogLanes[1].numObj = 2;
+  frogLanes[1].objs[0] = {10.0f, 58};
+  frogLanes[1].objs[1] = {200.0f, 58};
+
+  frogLanes[2].row = 3;
+  frogLanes[2].speed = -2.0f * speedMul;
+  frogLanes[2].isWater = false;
+  frogLanes[2].objColor = rgb888to565(220, 40, 40);
+  frogLanes[2].numObj = 3;
+  frogLanes[2].objs[0] = {20.0f, 36};
+  frogLanes[2].objs[1] = {140.0f, 36};
+  frogLanes[2].objs[2] = {270.0f, 36};
+
+  frogLanes[3].row = 5;
+  frogLanes[3].speed = 0.9f * speedMul;
+  frogLanes[3].isWater = true;
+  frogLanes[3].objColor = rgb888to565(139, 90, 43);
+  frogLanes[3].numObj = 3;
+  frogLanes[3].objs[0] = {0.0f, 62};
+  frogLanes[3].objs[1] = {140.0f, 62};
+  frogLanes[3].objs[2] = {280.0f, 62};
+
+  frogLanes[4].row = 6;
+  frogLanes[4].speed = -1.2f * speedMul;
+  frogLanes[4].isWater = true;
+  frogLanes[4].objColor = rgb888to565(139, 90, 43);
+  frogLanes[4].numObj = 3;
+  frogLanes[4].objs[0] = {10.0f, 48};
+  frogLanes[4].objs[1] = {140.0f, 48};
+  frogLanes[4].objs[2] = {270.0f, 48};
+
+  frogLanes[5].row = 7;
+  frogLanes[5].speed = 0.7f * speedMul;
+  frogLanes[5].isWater = true;
+  frogLanes[5].objColor = rgb888to565(139, 90, 43);
+  frogLanes[5].numObj = 2;
+  frogLanes[5].objs[0] = {10.0f, 92};
+  frogLanes[5].objs[1] = {200.0f, 92};
+}
+
+void drawFroggerArcadeHome() {
+  uint16_t road = rgb888to565(50, 50, 55);
+  uint16_t water = rgb888to565(14, 50, 145);
+  uint16_t grass = rgb888to565(24, 110, 35);
+
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->fillRect(0, 0, screenW, 130, water);
+  gfx->fillRect(0, 130, screenW, 130, road);
+  gfx->fillRect(0, 260, screenW, screenH - 260, grass);
+
+  for (int x = 0; x < screenW; x += 44) {
+    gfx->drawFastHLine(x, 88, 20, rgb888to565(80, 150, 255));
+    gfx->drawFastHLine(x + 12, 110, 18, rgb888to565(80, 150, 255));
+    gfx->drawFastHLine(x, 194, 22, RGB565_WHITE);
+    gfx->drawFastHLine(x + 18, 236, 18, RGB565_WHITE);
+  }
+
+  gfx->fillRoundRect(38, 24, 244, 78, 10, RGB565_BLACK);
+  gfx->drawRoundRect(38, 24, 244, 78, 10, RGB565_GREEN);
+  gfx->drawRoundRect(44, 30, 232, 66, 8, RGB565_YELLOW);
+  drawPixelText("FROGGER", 54, 48, 3, RGB565_GREEN, RGB565_BLACK);
+
+  gfx->fillCircle(60, 300, 18, RGB565_GREEN);
+  gfx->fillCircle(52, 288, 6, RGB565_WHITE);
+  gfx->fillCircle(68, 288, 6, RGB565_WHITE);
+  gfx->fillCircle(52, 288, 2, RGB565_BLACK);
+  gfx->fillCircle(68, 288, 2, RGB565_BLACK);
+
+  gfx->fillRect(188, 158, 54, 24, rgb888to565(230, 200, 0));
+  gfx->fillCircle(198, 183, 4, RGB565_BLACK);
+  gfx->fillCircle(232, 183, 4, RGB565_BLACK);
+  gfx->fillRect(44, 74, 82, 22, rgb888to565(139, 90, 43));
+  gfx->fillRect(178, 102, 72, 22, rgb888to565(139, 90, 43));
+}
+
+void drawFroggerMenuScreen() {
+  activeNetworkGame = NETWORK_GAME_FROGGER;
+  localGame = false;
+  appState = STATE_FROGGER;
+  drawFroggerArcadeHome();
+
+  drawTransparentArcadeButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH, "LOCAL", 2);
+  drawTransparentArcadeButton(btnHostX, btnHostY, btnHostW, btnHostH, "HOST", 2);
+  drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN", 2);
+  drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
+
+  char scoreLine[48];
+  snprintf(scoreLine, sizeof(scoreLine), "HIGH SCORE  %lu", (unsigned long)frogHiScore);
+  drawCenteredTextWithShadow(scoreLine, 462, 1, RGB565_WHITE, RGB565_BLACK);
+}
+
+void drawFroggerPlaceholderScreen(const char *title) {
+  appState = STATE_FROGGER_PLACEHOLDER;
+  gfx->fillScreen(RGB565_BLACK);
+  drawFroggerArcadeHome();
+
+  gfx->fillRoundRect(28, 116, 264, 150, 10, RGB565_BLACK);
+  gfx->drawRoundRect(28, 116, 264, 150, 10, RGB565_GREEN);
+  drawCenteredText(title, 150, 3, RGB565_GREEN);
+  drawCenteredText("coming soon", 204, 2, RGB565_WHITE);
+
+  drawButton(btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+}
+
+void drawFroggerObstacle(const FroggerLane &lane, int index) {
+  int ox = (int)lane.objs[index].x;
+  int oy = frogRowY[lane.row];
+  int ow = lane.objs[index].w;
+  int drawX = max(0, ox);
+  int drawEnd = min(screenW, ox + ow);
+  int drawW = drawEnd - drawX;
+
+  if (drawW <= 0) return;
+
+  if (lane.isWater) {
+    uint16_t logDark = rgb888to565(100, 60, 20);
+    gfx->fillRect(drawX, oy + 3, drawW, FROG_LANE_H - 6, rgb888to565(139, 90, 43));
+
+    for (int g = ox + 12; g < ox + ow; g += 20) {
+      if (g >= 0 && g < screenW) {
+        gfx->drawFastVLine(g, oy + 5, FROG_LANE_H - 10, logDark);
+      }
+    }
+
+    if (drawX == ox) {
+      gfx->fillRoundRect(drawX, oy + 3, 6, FROG_LANE_H - 6, 2, logDark);
+    }
+
+    if (drawEnd == ox + ow) {
+      gfx->fillRoundRect(drawEnd - 6, oy + 3, 6, FROG_LANE_H - 6, 2, logDark);
+    }
+
+    return;
+  }
+
+  int bodyY = oy + 8;
+  int bodyH = FROG_LANE_H - 16;
+  gfx->fillRect(drawX, bodyY, drawW, bodyH, lane.objColor);
+
+  int roofX = ox + 6;
+  int roofW = ow - 12;
+  int roofDrawX = max(0, roofX);
+  int roofDrawW = min(screenW, roofX + roofW) - roofDrawX;
+
+  if (roofDrawW > 0) {
+    gfx->fillRect(roofDrawX, oy + 4, roofDrawW, FROG_LANE_H - 8, lane.objColor);
+  }
+
+  int wheelY = oy + FROG_LANE_H - 10;
+  if (ox + 6 >= 0 && ox + 6 < screenW) {
+    gfx->fillCircle(ox + 6, wheelY, 3, RGB565_BLACK);
+  }
+
+  if (ox + ow - 6 >= 0 && ox + ow - 6 < screenW) {
+    gfx->fillCircle(ox + ow - 6, wheelY, 3, RGB565_BLACK);
+  }
+
+  int windowX = ox + ow / 2 - 5;
+  int windowDrawX = max(0, windowX);
+  int windowDrawW = min(screenW, windowX + 10) - windowDrawX;
+
+  if (windowDrawW > 0) {
+    gfx->fillRect(windowDrawX, oy + 6, windowDrawW, 8, rgb888to565(180, 220, 255));
+  }
+}
+
+void drawFroggerFrog(float xFloat, int row) {
+  int x = (int)xFloat;
+  int y = frogRowY[row] + (FROG_LANE_H - FROG_H) / 2;
+  uint16_t frog = rgb888to565(40, 200, 40);
+  uint16_t darkFrog = rgb888to565(0, 130, 0);
+
+  gfx->fillRect(x - 3, y + 17, 7, 9, darkFrog);
+  gfx->fillRect(x + FROG_W - 4, y + 17, 7, 9, darkFrog);
+  gfx->fillRect(x - 5, y + 22, 5, 4, darkFrog);
+  gfx->fillRect(x + FROG_W, y + 22, 5, 4, darkFrog);
+  gfx->fillRoundRect(x + 3, y + 4, FROG_W - 6, FROG_H - 6, 7, frog);
+  gfx->fillRect(x - 1, y + 7, 5, 5, darkFrog);
+  gfx->fillRect(x + FROG_W - 4, y + 7, 5, 5, darkFrog);
+  gfx->fillCircle(x + 6, y + 2, 4, frog);
+  gfx->fillCircle(x + FROG_W - 6, y + 2, 4, frog);
+  gfx->fillCircle(x + 6, y + 2, 3, RGB565_WHITE);
+  gfx->fillCircle(x + FROG_W - 6, y + 2, 3, RGB565_WHITE);
+  gfx->fillCircle(x + 6, y + 2, 1, RGB565_BLACK);
+  gfx->fillCircle(x + FROG_W - 6, y + 2, 1, RGB565_BLACK);
+  gfx->drawPixel(x + FROG_W / 2 - 2, y + 6, darkFrog);
+  gfx->drawPixel(x + FROG_W / 2 + 1, y + 6, darkFrog);
+}
+
+void clearFroggerFrog(float xFloat, int row) {
+  int x = (int)xFloat;
+  int y = frogRowY[row] + (FROG_LANE_H - FROG_H) / 2;
+  gfx->fillRect(x - 6, y - 3, FROG_W + 12, FROG_H + 6, froggerRowBg(row));
+
+  if (row >= 5 && row <= 7) {
+    int laneIndex = froggerLaneIndexForRow(row);
+
+    if (laneIndex >= 0) {
+      for (int i = 0; i < frogLanes[laneIndex].numObj; i++) {
+        int ox = (int)frogLanes[laneIndex].objs[i].x;
+        int ow = frogLanes[laneIndex].objs[i].w;
+
+        if (ox + ow > x - 6 && ox < x + FROG_W + 6) {
+          drawFroggerObstacle(frogLanes[laneIndex], i);
+        }
+      }
+    }
+  }
+}
+
+void drawFroggerGoalSlots() {
+  int y = frogRowY[FROG_ROWS - 1];
+  uint16_t grass = rgb888to565(30, 120, 30);
+  uint16_t darkGrass = rgb888to565(15, 70, 15);
+  uint16_t water = rgb888to565(20, 70, 190);
+  uint16_t lily = rgb888to565(0, 160, 60);
+  uint16_t frog = rgb888to565(40, 200, 40);
+  uint16_t darkFrog = rgb888to565(0, 130, 0);
+
+  gfx->fillRect(0, y, screenW, FROG_LANE_H, darkGrass);
+
+  for (int i = 0; i < FROG_GOALS - 1; i++) {
+    int sep = (frogGoalX[i] + frogGoalX[i + 1]) / 2;
+    gfx->fillRect(sep - 2, y, 4, FROG_LANE_H, grass);
+  }
+
+  gfx->fillRect(0, y, 6, FROG_LANE_H, grass);
+  gfx->fillRect(screenW - 6, y, 6, FROG_LANE_H, grass);
+
+  for (int goal = 0; goal < FROG_GOALS; goal++) {
+    int cx = frogGoalX[goal];
+    int cy = y + FROG_LANE_H / 2;
+
+    if (frogGoalFilled[goal]) {
+      gfx->fillCircle(cx, cy, 14, lily);
+      gfx->fillRoundRect(cx - 8, cy - 6, 16, 14, 4, frog);
+      gfx->fillCircle(cx - 3, cy - 4, 2, RGB565_WHITE);
+      gfx->fillCircle(cx + 3, cy - 4, 2, RGB565_WHITE);
+    } else {
+      gfx->fillCircle(cx, cy, 14, water);
+      gfx->fillCircle(cx, cy, 12, lily);
+      gfx->drawLine(cx, cy - 10, cx, cy + 10, darkFrog);
+      gfx->drawLine(cx - 8, cy, cx + 8, cy, darkFrog);
+    }
+  }
+}
+
+void drawFroggerHud() {
+  uint16_t hudBg = rgb888to565(0, 0, 40);
+  uint16_t border = rgb888to565(50, 50, 220);
+
+  gfx->fillRect(0, 0, screenW, FROG_HUD_H, hudBg);
+  gfx->drawFastHLine(0, FROG_HUD_H, screenW, border);
+  gfx->setTextColor(RGB565_GREEN);
+  gfx->setTextSize(2);
+  gfx->setCursor(55, 4);
+  gfx->print("FROGGER");
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(8, 28);
+  gfx->print("Score:");
+  gfx->setCursor(108, 28);
+  gfx->print("Lives:");
+  gfx->setCursor(176, 28);
+  gfx->print("Lv:");
+  gfx->setCursor(214, 28);
+  gfx->print("Hi:");
+
+  drawButton(btnFrogMenuX, btnFrogMenuY, btnFrogMenuW, btnFrogMenuH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 1);
+}
+
+void drawFroggerHudValues() {
+  uint16_t hudBg = rgb888to565(0, 0, 40);
+
+  gfx->setTextSize(1);
+  gfx->fillRect(48, 26, 52, 12, hudBg);
+  gfx->setTextColor(RGB565_YELLOW);
+  gfx->setCursor(48, 28);
+  gfx->print(frogScore);
+
+  gfx->fillRect(146, 26, 25, 12, hudBg);
+  gfx->setTextColor(frogLives <= 1 ? RGB565_RED : RGB565_GREEN);
+  gfx->setCursor(146, 28);
+  gfx->print(frogLives);
+
+  gfx->fillRect(194, 26, 18, 12, hudBg);
+  gfx->setTextColor(rgb888to565(255, 160, 0));
+  gfx->setCursor(194, 28);
+  gfx->print(frogLevel);
+
+  gfx->fillRect(234, 26, 52, 12, hudBg);
+  gfx->setTextColor(RGB565_YELLOW);
+  gfx->setCursor(234, 28);
+  gfx->print(frogHiScore);
+}
+
+void drawFroggerControls() {
+  uint16_t hudBg = rgb888to565(0, 0, 40);
+  uint16_t border = rgb888to565(50, 50, 220);
+  int buttonW = 68;
+  int buttonH = 38;
+  int gap = (screenW - 4 * buttonW) / 5;
+  const char *labels[] = {"LEFT", "UP", "DOWN", "RIGHT"};
+  uint16_t colors[] = {RGB565_GREEN, RGB565_YELLOW, RGB565_YELLOW, RGB565_GREEN};
+
+  gfx->fillRect(0, FROG_BTN_TOP, screenW, screenH - FROG_BTN_TOP, hudBg);
+  gfx->drawFastHLine(0, FROG_BTN_TOP, screenW, border);
+
+  for (int i = 0; i < 4; i++) {
+    int x = gap + i * (buttonW + gap);
+    int y = FROG_BTN_TOP + (screenH - FROG_BTN_TOP - buttonH) / 2;
+    gfx->drawRoundRect(x, y, buttonW, buttonH, 5, colors[i]);
+    gfx->setTextColor(colors[i]);
+    gfx->setTextSize(1);
+    int tw = strlen(labels[i]) * 6;
+    gfx->setCursor(x + (buttonW - tw) / 2, y + buttonH / 2 - 4);
+    gfx->print(labels[i]);
+  }
+}
+
+void drawFroggerFieldBg() {
+  uint16_t roadLine = rgb888to565(180, 180, 180);
+  uint16_t waterDark = rgb888to565(10, 45, 140);
+
+  for (int r = 0; r < FROG_ROWS; r++) {
+    gfx->fillRect(0, frogRowY[r], screenW, FROG_LANE_H, froggerRowBg(r));
+  }
+
+  for (int r = 1; r <= 3; r++) {
+    int y = frogRowY[r] + FROG_LANE_H - 1;
+
+    if (r < 3) {
+      for (int x = 5; x < screenW; x += 24) {
+        gfx->drawFastHLine(x, y, 12, roadLine);
+      }
+    }
+  }
+
+  gfx->drawFastHLine(0, frogRowY[1] + FROG_LANE_H, screenW, roadLine);
+  gfx->drawFastHLine(0, frogRowY[3], screenW, roadLine);
+
+  for (int r = 5; r <= 7; r++) {
+    for (int x = 0; x < screenW; x += 35) {
+      gfx->drawFastHLine(x, frogRowY[r] + FROG_LANE_H - 3, 18, waterDark);
+    }
+  }
+
+  drawFroggerGoalSlots();
+}
+
+void drawFroggerFullScene() {
+  gfx->fillScreen(RGB565_BLACK);
+  drawFroggerHud();
+  drawFroggerHudValues();
+  drawFroggerFieldBg();
+
+  for (int lane = 0; lane < FROG_LANES; lane++) {
+    for (int obj = 0; obj < frogLanes[lane].numObj; obj++) {
+      drawFroggerObstacle(frogLanes[lane], obj);
+    }
+  }
+
+  drawFroggerFrog(frogX, frogRow);
+  frogPrevX = frogX;
+  frogPrevRow = frogRow;
+  drawFroggerControls();
+}
+
+void resetFroggerFrog() {
+  frogX = (float)((screenW - FROG_W) / 2);
+  frogRow = 0;
+  frogAlive = true;
+  frogJustJumped = false;
+}
+
+void resetFroggerGame() {
+  frogScore = 0;
+  frogLives = 3;
+  frogLevel = 1;
+  frogGameOver = false;
+  frogDying = false;
+
+  for (int i = 0; i < FROG_GOALS; i++) {
+    frogGoalFilled[i] = false;
+  }
+
+  resetFroggerFrog();
+  initFroggerLanes();
+}
+
+void froggerDie() {
+  if (!frogAlive || frogDying || frogGameOver) return;
+
+  frogAlive = false;
+  frogDying = true;
+  frogDeathTime = millis();
+  tone(PIN_BUZZER, 180, 200);
+
+  int y = frogRowY[frogRow] + (FROG_LANE_H - FROG_H) / 2;
+  int x = (int)frogX;
+
+  for (int flash = 0; flash < 3; flash++) {
+    gfx->fillRect(x, y, FROG_W, FROG_H, RGB565_RED);
+    delay(70);
+    gfx->fillRect(x, y, FROG_W, FROG_H, froggerRowBg(frogRow));
+    delay(70);
+  }
+}
+
+void drawFroggerGameOverOverlay() {
+  if ((uint32_t)frogScore >= frogHiScore) {
+    frogHiScore = frogScore;
+    saveFroggerScore();
+  }
+
+  gfx->fillRoundRect(28, 122, 264, 230, 10, rgb888to565(0, 0, 40));
+  gfx->drawRoundRect(28, 122, 264, 230, 10, RGB565_RED);
+  gfx->drawRoundRect(34, 128, 252, 218, 8, RGB565_GREEN);
+
+  drawCenteredText("GAME OVER", 154, 3, RGB565_RED);
+
+  char line[40];
+  snprintf(line, sizeof(line), "Level: %d", frogLevel);
+  drawCenteredText(line, 214, 2, RGB565_YELLOW);
+  snprintf(line, sizeof(line), "Score: %d", frogScore);
+  drawCenteredText(line, 246, 2, RGB565_GREEN);
+  drawCenteredText("Tap to restart", 292, 1, RGB565_CYAN);
+}
+
+void finishFroggerGame() {
+  frogGameOver = true;
+  frogDying = false;
+  drawFroggerGameOverOverlay();
+}
+
+void handleFroggerDying() {
+  if (!frogDying) return;
+  if (millis() - frogDeathTime < 800) return;
+
+  frogLives--;
+
+  if (frogLives <= 0) {
+    finishFroggerGame();
+    return;
+  }
+
+  frogDying = false;
+  resetFroggerFrog();
+  drawFroggerFieldBg();
+
+  for (int lane = 0; lane < FROG_LANES; lane++) {
+    for (int obj = 0; obj < frogLanes[lane].numObj; obj++) {
+      drawFroggerObstacle(frogLanes[lane], obj);
+    }
+  }
+
+  drawFroggerFrog(frogX, frogRow);
+  frogPrevX = frogX;
+  frogPrevRow = frogRow;
+  drawFroggerHudValues();
+}
+
+void checkFroggerCollisions() {
+  if (!frogAlive || frogDying || frogGameOver) return;
+
+  if (frogRow >= 1 && frogRow <= 3) {
+    int laneIndex = froggerLaneIndexForRow(frogRow);
+
+    if (laneIndex >= 0) {
+      for (int i = 0; i < frogLanes[laneIndex].numObj; i++) {
+        float ox = frogLanes[laneIndex].objs[i].x;
+        int ow = frogLanes[laneIndex].objs[i].w;
+
+        if (frogX + FROG_W - 4 > ox && frogX + 4 < ox + ow) {
+          froggerDie();
+          return;
+        }
+      }
+    }
+  }
+
+  if (frogRow >= 5 && frogRow <= 7) {
+    bool onLog = false;
+    int laneIndex = froggerLaneIndexForRow(frogRow);
+
+    if (laneIndex >= 0) {
+      for (int i = 0; i < frogLanes[laneIndex].numObj; i++) {
+        float ox = frogLanes[laneIndex].objs[i].x;
+        int ow = frogLanes[laneIndex].objs[i].w;
+        float frogCenter = frogX + FROG_W / 2.0f;
+
+        if (frogCenter > ox + 4 && frogCenter < ox + ow - 4) {
+          onLog = true;
+          frogX += frogLanes[laneIndex].speed;
+          break;
+        }
+      }
+    }
+
+    if (!onLog && !frogJustJumped) {
+      froggerDie();
+      return;
+    }
+
+    if (frogX + FROG_W < -5 || frogX > screenW + 5) {
+      froggerDie();
+      return;
+    }
+
+    frogX = constrain(frogX, -2.0f, (float)(screenW - FROG_W + 2));
+  }
+
+  if (frogRow == FROG_ROWS - 1) {
+    float frogCenter = frogX + FROG_W / 2.0f;
+    bool landed = false;
+
+    for (int goal = 0; goal < FROG_GOALS; goal++) {
+      if (!frogGoalFilled[goal] && fabs(frogCenter - frogGoalX[goal]) < 30.0f) {
+        frogGoalFilled[goal] = true;
+        frogScore += 50;
+
+        if ((uint32_t)frogScore > frogHiScore) {
+          frogHiScore = frogScore;
+        }
+
+        tone(PIN_BUZZER, 1400, 80);
+        drawFroggerGoalSlots();
+        landed = true;
+        break;
+      }
+    }
+
+    if (!landed && !frogJustJumped) {
+      froggerDie();
+      return;
+    }
+
+    if (!landed) return;
+
+    bool allFilled = true;
+    for (int goal = 0; goal < FROG_GOALS; goal++) {
+      if (!frogGoalFilled[goal]) {
+        allFilled = false;
+        break;
+      }
+    }
+
+    if (allFilled) {
+      frogLevel++;
+      frogScore += 100;
+
+      if ((uint32_t)frogScore > frogHiScore) {
+        frogHiScore = frogScore;
+      }
+
+      for (int goal = 0; goal < FROG_GOALS; goal++) {
+        frogGoalFilled[goal] = false;
+      }
+
+      initFroggerLanes();
+      tone(PIN_BUZZER, 1800, 100);
+      delay(300);
+      drawFroggerFieldBg();
+
+      for (int lane = 0; lane < FROG_LANES; lane++) {
+        for (int obj = 0; obj < frogLanes[lane].numObj; obj++) {
+          drawFroggerObstacle(frogLanes[lane], obj);
+        }
+      }
+    }
+
+    resetFroggerFrog();
+    frogScore += 10;
+  }
+
+  frogJustJumped = false;
+}
+
+void updateFroggerLane(int laneIndex) {
+  FroggerLane &lane = frogLanes[laneIndex];
+  int y = frogRowY[lane.row];
+
+  for (int i = 0; i < lane.numObj; i++) {
+    float oldX = lane.objs[i].x;
+    lane.objs[i].x += lane.speed;
+    int w = lane.objs[i].w;
+
+    if (lane.speed > 0 && lane.objs[i].x > screenW + 15) {
+      lane.objs[i].x = (float)(-(w + 15));
+    } else if (lane.speed < 0 && lane.objs[i].x + w < -15) {
+      lane.objs[i].x = (float)(screenW + 15);
+    }
+
+    float newX = lane.objs[i].x;
+    float delta = newX - oldX;
+
+    if (fabs(delta) > (float)w) {
+      int clearX = max(0, (int)oldX);
+      int clearEnd = min(screenW, (int)oldX + w);
+      if (clearEnd > clearX) {
+        gfx->fillRect(clearX, y, clearEnd - clearX, FROG_LANE_H, froggerRowBg(lane.row));
+      }
+    } else if (delta > 0.1f) {
+      int clearX = max(0, (int)oldX);
+      int clearEnd = min(screenW, (int)newX);
+      if (clearEnd > clearX) {
+        gfx->fillRect(clearX, y, clearEnd - clearX, FROG_LANE_H, froggerRowBg(lane.row));
+      }
+    } else if (delta < -0.1f) {
+      int clearX = max(0, (int)(newX + w));
+      int clearEnd = min(screenW, (int)(oldX + w));
+      if (clearEnd > clearX) {
+        gfx->fillRect(clearX, y, clearEnd - clearX, FROG_LANE_H, froggerRowBg(lane.row));
+      }
+    }
+
+    drawFroggerObstacle(lane, i);
+  }
+}
+
+void drawFroggerGameFrame() {
+  bool rowChanged = (frogRow != frogPrevRow);
+  bool hopped = (fabs(frogX - frogPrevX) > (float)FROG_STEP_X * 0.5f);
+
+  if (rowChanged || hopped) {
+    clearFroggerFrog(frogPrevX, frogPrevRow);
+  }
+
+  bool frogDrawn = false;
+
+  for (int lane = 0; lane < FROG_LANES; lane++) {
+    updateFroggerLane(lane);
+
+    if (frogLanes[lane].row == frogRow) {
+      drawFroggerFrog(frogX, frogRow);
+      frogDrawn = true;
+    }
+  }
+
+  if (!frogDrawn && (rowChanged || hopped)) {
+    drawFroggerFrog(frogX, frogRow);
+  }
+
+  frogPrevX = frogX;
+  frogPrevRow = frogRow;
+  drawFroggerHudValues();
+}
+
+void updateFroggerGame() {
+  if (appState != STATE_FROGGER_PLAYING) return;
+
+  if (frogDying) {
+    handleFroggerDying();
+    return;
+  }
+
+  if (frogGameOver) return;
+
+  unsigned long now = millis();
+
+  if (now - frogLastFrame < FROG_FRAME_MS) return;
+  frogLastFrame = now;
+
+  checkFroggerCollisions();
+  if (frogDying || frogGameOver) return;
+
+  drawFroggerGameFrame();
+}
+
+void moveFroggerFrog(int action) {
+  if (frogDying || frogGameOver) return;
+
+  if (action == 0) {
+    if (frogX > 0) {
+      frogX -= FROG_STEP_X;
+      tone(PIN_BUZZER, 800, 30);
+    }
+  } else if (action == 1) {
+    if (frogRow < FROG_ROWS - 1) {
+      frogRow++;
+      frogScore++;
+      frogJustJumped = true;
+      tone(PIN_BUZZER, 800, 30);
+    }
+  } else if (action == 2) {
+    if (frogRow > 0) {
+      frogRow--;
+      frogJustJumped = true;
+      tone(PIN_BUZZER, 800, 30);
+    }
+  } else if (action == 3) {
+    if (frogX < screenW - FROG_W) {
+      frogX += FROG_STEP_X;
+      tone(PIN_BUZZER, 800, 30);
+    }
+  }
+
+  frogX = constrain(frogX, 0.0f, (float)(screenW - FROG_W));
+  checkFroggerCollisions();
+
+  if (!frogDying && !frogGameOver) {
+    clearFroggerFrog(frogPrevX, frogPrevRow);
+    drawFroggerFrog(frogX, frogRow);
+    frogPrevX = frogX;
+    frogPrevRow = frogRow;
+    drawFroggerHudValues();
+  }
+}
+
+void startFroggerLocalGame() {
+  activeNetworkGame = NETWORK_GAME_FROGGER;
+  stopNetwork();
+  localGame = true;
+  appState = STATE_FROGGER_PLAYING;
+  initFroggerLayout();
+  resetFroggerGame();
+  tone(PIN_BUZZER, 900, 60);
+  drawFroggerFullScene();
+  frogLastFrame = millis();
+}
+
+void startFroggerNetworkGame() {
+  activeNetworkGame = NETWORK_GAME_FROGGER;
+  localGame = false;
+  beepStart();
+  drawFroggerPlaceholderScreen(isHost ? "FROG HOST" : "FROG JOIN");
+}
+
 void drawPocketTanksMenuScreen() {
   activeNetworkGame = NETWORK_GAME_PT;
   localGame = false;
@@ -5924,6 +6781,7 @@ void drawWaitingHostScreen() {
   bool pongNetworkGame = (activeNetworkGame == NETWORK_GAME_PONG);
   bool snakeNetworkGame = (activeNetworkGame == NETWORK_GAME_SNAKE);
   bool ranchNetworkGame = (activeNetworkGame == NETWORK_GAME_RANCH_RUSH);
+  bool froggerNetworkGame = (activeNetworkGame == NETWORK_GAME_FROGGER);
 
   gfx->fillScreen(RGB565_BLACK);
 
@@ -5933,6 +6791,8 @@ void drawWaitingHostScreen() {
     drawCenteredText("SNAKE HOST", 28, 3, RGB565_GREEN);
   } else if (ranchNetworkGame) {
     drawCenteredText("RANCH HOST", 28, 3, RGB565_GREEN);
+  } else if (froggerNetworkGame) {
+    drawCenteredText("FROG HOST", 28, 3, RGB565_GREEN);
   } else if (breakoutNetworkGame) {
     drawCenteredText("BREAKOUT HOST", 28, 2, RGB565_GREEN);
   } else if (tanksNetworkGame) {
@@ -5941,7 +6801,7 @@ void drawWaitingHostScreen() {
     drawCenteredText(rpsNetworkGame ? "RPS HOST" : "HOST ACTIV", 28, 3, RGB565_GREEN);
   }
 
-  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame) ? "Tu esti P1" : "Tu esti X", 72, 2, RGB565_WHITE);
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame || froggerNetworkGame) ? "Tu esti P1" : "Tu esti X", 72, 2, RGB565_WHITE);
 
   drawCenteredText("Asteapta oponentul", 118, 2, RGB565_YELLOW);
   drawCenteredText("sa intre cu JOIN", 145, 2, RGB565_YELLOW);
@@ -5966,6 +6826,7 @@ void drawConnectingJoinScreen() {
   bool pongNetworkGame = (activeNetworkGame == NETWORK_GAME_PONG);
   bool snakeNetworkGame = (activeNetworkGame == NETWORK_GAME_SNAKE);
   bool ranchNetworkGame = (activeNetworkGame == NETWORK_GAME_RANCH_RUSH);
+  bool froggerNetworkGame = (activeNetworkGame == NETWORK_GAME_FROGGER);
 
   gfx->fillScreen(RGB565_BLACK);
 
@@ -5975,6 +6836,8 @@ void drawConnectingJoinScreen() {
     drawCenteredText("SNAKE JOIN", 70, 3, RGB565_BLUE);
   } else if (ranchNetworkGame) {
     drawCenteredText("RANCH JOIN", 70, 3, RGB565_BLUE);
+  } else if (froggerNetworkGame) {
+    drawCenteredText("FROG JOIN", 70, 3, RGB565_BLUE);
   } else if (breakoutNetworkGame) {
     drawCenteredText("BREAKOUT JOIN", 70, 2, RGB565_BLUE);
   } else if (tanksNetworkGame) {
@@ -5983,7 +6846,7 @@ void drawConnectingJoinScreen() {
     drawCenteredText(rpsNetworkGame ? "RPS JOIN" : "JOIN", 70, 3, RGB565_BLUE);
   }
 
-  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame) ? "Tu esti P2" : "Tu esti O", 120, 2, RGB565_WHITE);
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame || froggerNetworkGame) ? "Tu esti P2" : "Tu esti O", 120, 2, RGB565_WHITE);
 
   drawCenteredText("Connecting...", 190, 2, RGB565_YELLOW);
 
@@ -6187,6 +7050,7 @@ void startBreakoutNetworkGame();
 void startPongNetworkGame();
 void startSnakeNetworkGame();
 void startRanchRushNetworkGame();
+void startFroggerNetworkGame();
 
 // ============================================================================
 // NETWORK
@@ -6199,6 +7063,7 @@ const char *getNetworkGameCode() {
   if (activeNetworkGame == NETWORK_GAME_PONG) return "PONG";
   if (activeNetworkGame == NETWORK_GAME_SNAKE) return "SNK";
   if (activeNetworkGame == NETWORK_GAME_RANCH_RUSH) return "RANCH";
+  if (activeNetworkGame == NETWORK_GAME_FROGGER) return "FROG";
   return "TTT";
 }
 
@@ -6230,6 +7095,8 @@ void applyNetworkGameCode(const String &code) {
     activeNetworkGame = NETWORK_GAME_SNAKE;
   } else if (gameCode == "RANCH") {
     activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
+  } else if (gameCode == "FROG") {
+    activeNetworkGame = NETWORK_GAME_FROGGER;
   } else if (gameCode == "TTT") {
     activeNetworkGame = NETWORK_GAME_TTT;
   }
@@ -6368,7 +7235,8 @@ void beginHostNetwork() {
             activeNetworkGame == NETWORK_GAME_BREAKOUT ||
             activeNetworkGame == NETWORK_GAME_PONG ||
             activeNetworkGame == NETWORK_GAME_SNAKE ||
-            activeNetworkGame == NETWORK_GAME_RANCH_RUSH);
+            activeNetworkGame == NETWORK_GAME_RANCH_RUSH ||
+            activeNetworkGame == NETWORK_GAME_FROGGER);
 
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(HOST_IP, HOST_IP, IPAddress(255, 255, 255, 0));
@@ -6455,6 +7323,11 @@ void startNetworkGame() {
 
   if (activeNetworkGame == NETWORK_GAME_RANCH_RUSH) {
     startRanchRushNetworkGame();
+    return;
+  }
+
+  if (activeNetworkGame == NETWORK_GAME_FROGGER) {
+    startFroggerNetworkGame();
     return;
   }
 
@@ -6986,6 +7859,8 @@ void returnToMenu(bool notifyPeer) {
     drawSnakeMenuScreen();
   } else if (activeNetworkGame == NETWORK_GAME_RANCH_RUSH) {
     drawRanchRushMenuScreen();
+  } else if (activeNetworkGame == NETWORK_GAME_FROGGER) {
+    drawFroggerMenuScreen();
   } else {
     appState = STATE_MENU;
     drawMenuScreen();
@@ -7179,7 +8054,9 @@ void pollNetwork() {
         appState == STATE_SNAKE_PLAYING ||
         appState == STATE_SNAKE_PLACEHOLDER ||
         appState == STATE_RR_PLAYING ||
-        appState == STATE_RR_PLACEHOLDER) {
+        appState == STATE_RR_PLACEHOLDER ||
+        appState == STATE_FROGGER_PLAYING ||
+        appState == STATE_FROGGER_PLACEHOLDER) {
       gfx->fillScreen(RGB565_BLACK);
       drawCenteredText("Conexiune pierduta", 180, 2, RGB565_RED);
       delay(1200);
@@ -7319,6 +8196,26 @@ void handleGamesMoreTouch(int x, int y) {
   if (inRect(x, y, btnGamesNavLeftX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH)) {
     beepClick();
     drawGamesScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnGamesNavRightX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH)) {
+    beepClick();
+    drawGamesExtraScreen();
+    return;
+  }
+}
+
+void handleGamesExtraTouch(int x, int y) {
+  if (inRect(x, y, btnGamesX, btnGamesRpsY, btnGamesW, btnGamesH)) {
+    beepClick();
+    drawFroggerMenuScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnGamesNavLeftX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH)) {
+    beepClick();
+    drawGamesMoreScreen();
     return;
   }
 
@@ -7597,6 +8494,92 @@ void handleRanchRushPlayingTouch(int x, int y) {
     }
 
     return;
+  }
+}
+
+void handleFroggerMenuTouch(int x, int y) {
+  if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
+    startFroggerLocalGame();
+    return;
+  }
+
+  if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_FROGGER;
+    startHostMode();
+    return;
+  }
+
+  if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_FROGGER;
+    startJoinMode();
+    return;
+  }
+
+  if (inRect(x, y, btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH)) {
+    beepClick();
+    drawGamesExtraScreen();
+    return;
+  }
+}
+
+void handleFroggerPlaceholderTouch(int x, int y) {
+  if (inRect(x, y, btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH)) {
+    beepClick();
+
+    if (localGame) {
+      drawFroggerMenuScreen();
+    } else {
+      returnToMenu(true);
+    }
+
+    return;
+  }
+}
+
+void handleFroggerPlayingTouch(int x, int y) {
+  if (inRect(x, y, btnFrogMenuX, btnFrogMenuY, btnFrogMenuW, btnFrogMenuH)) {
+    beepClick();
+    drawFroggerMenuScreen();
+    return;
+  }
+
+  if (frogGameOver) {
+    startFroggerLocalGame();
+    return;
+  }
+
+  if (frogDying) return;
+
+  if (y >= FROG_BTN_TOP) {
+    int buttonW = 68;
+    int gap = (screenW - 4 * buttonW) / 5;
+
+    if (x < gap + buttonW) {
+      moveFroggerFrog(0);
+    } else if (x < 2 * gap + 2 * buttonW) {
+      moveFroggerFrog(1);
+    } else if (x < 3 * gap + 3 * buttonW) {
+      moveFroggerFrog(2);
+    } else {
+      moveFroggerFrog(3);
+    }
+
+    return;
+  }
+
+  if (y >= FROG_FIELD_TOP && y < FROG_BTN_TOP) {
+    int fieldMidY = (FROG_FIELD_TOP + FROG_BTN_TOP) / 2;
+    int fieldMidX = screenW / 2;
+    int dy = abs(y - fieldMidY);
+    int dx = abs(x - fieldMidX);
+
+    if (dy >= dx) {
+      moveFroggerFrog(y < fieldMidY ? 1 : 2);
+    } else {
+      moveFroggerFrog(x < fieldMidX ? 0 : 3);
+    }
   }
 }
 
@@ -8209,6 +9192,8 @@ void handleTouch(int x, int y) {
     handleGamesTouch(x, y);
   } else if (appState == STATE_GAMES_MORE) {
     handleGamesMoreTouch(x, y);
+  } else if (appState == STATE_GAMES_EXTRA) {
+    handleGamesExtraTouch(x, y);
   } else if (appState == STATE_ROCK_PAPER_SCISSORS) {
     handleRpsMenuTouch(x, y);
   } else if (appState == STATE_RPS_CHOICE_P1 || appState == STATE_RPS_CHOICE_P2) {
@@ -8251,6 +9236,12 @@ void handleTouch(int x, int y) {
     handleRanchRushPlayingTouch(x, y);
   } else if (appState == STATE_RR_PLACEHOLDER) {
     handleRanchRushPlaceholderTouch(x, y);
+  } else if (appState == STATE_FROGGER) {
+    handleFroggerMenuTouch(x, y);
+  } else if (appState == STATE_FROGGER_PLAYING) {
+    handleFroggerPlayingTouch(x, y);
+  } else if (appState == STATE_FROGGER_PLACEHOLDER) {
+    handleFroggerPlaceholderTouch(x, y);
   } else if (appState == STATE_EMPTY_GAME) {
     handleEmptyGameTouch(x, y);
   } else if (appState == STATE_MENU) {
@@ -8339,6 +9330,7 @@ void setup() {
   loadRpsScore();
   loadPocketTanksScore();
   loadRanchRushScore();
+  loadFroggerScore();
   loadNetworkSettings();
   clearBoard();
   WiFi.mode(WIFI_OFF);
@@ -8390,6 +9382,7 @@ void loop() {
   updatePongGame();
   updateSnakeGame();
   updateRanchRushGame();
+  updateFroggerGame();
 
   delay(10);
 }
