@@ -1,6 +1,9 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 7.0 - 2026-06-18 09:27 - Added network Snake gameplay with
+// host-authoritative two-player movement, synced state packets, shared food,
+// different snake colors, and remote direction control.
 // Version 6.9 - 2026-06-18 08:18 - Reduced Snake movement flicker by switching
 // from full-board redraws to incremental cell updates during movement.
 // Version 6.8 - 2026-06-18 08:06 - Implemented local Snake gameplay with a
@@ -169,8 +172,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 6.9";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V69-2026061808";
+const char *APP_VERSION_TEXT = "Version 7.0";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V70-2026061809";
 
 
 
@@ -479,8 +482,9 @@ unsigned long pongLastFrame = 0;
 int pongLastSentPaddleX = -1;
 unsigned long pongLastStateSendTime = 0;
 
-// Snake local gameplay uses a 20 x 22 grid in the upper play area and a simple
-// directional pad in the bottom strip. Network mode is still menu-only for now.
+// Snake uses a 20 x 22 grid in the upper play area and a simple directional pad
+// in the bottom strip. Network mode is host-authoritative with two visible
+// snakes and a shared food item.
 static const int SNAKE_GRID_COLS = 20;
 static const int SNAKE_GRID_ROWS = 22;
 static const int SNAKE_CELL = 14;
@@ -520,6 +524,20 @@ int snakeFoodY = 0;
 int snakeScore = 0;
 bool snakeGameOver = false;
 unsigned long snakeLastFrame = 0;
+
+int snakeNetX[2][SNAKE_MAX_LEN];
+int snakeNetY[2][SNAKE_MAX_LEN];
+int snakeNetLength[2] = {0, 0};
+int snakeNetDir[2] = {SNAKE_DIR_RIGHT, SNAKE_DIR_LEFT};
+int snakeNetNextDir[2] = {SNAKE_DIR_RIGHT, SNAKE_DIR_LEFT};
+int snakeNetScore[2] = {0, 0};
+bool snakeNetAlive[2] = {false, false};
+bool snakeNetGameOver = false;
+int snakeNetWinner = 0;
+uint8_t snakeDrawOwner[SNAKE_MAX_LEN];
+uint8_t snakeDrawHead[SNAKE_MAX_LEN];
+int snakeDrawFoodCell = -1;
+bool snakeDrawReady = false;
 
 // Touch edge detection and debounce. Touch actions fire once per press, not on
 // every loop while the finger is still down.
@@ -3840,7 +3858,13 @@ void drawSnakeHud() {
   gfx->drawLine(0, 42, screenW - 1, 42, RGB565_GREEN);
 
   char line[32];
-  snprintf(line, sizeof(line), "SNAKE  SCORE:%d", snakeScore);
+
+  if (localGame) {
+    snprintf(line, sizeof(line), "SNAKE  SCORE:%d", snakeScore);
+  } else {
+    snprintf(line, sizeof(line), "P1:%d  P2:%d", snakeNetScore[0], snakeNetScore[1]);
+  }
+
   gfx->setTextSize(2);
   gfx->setTextColor(RGB565_WHITE);
   gfx->setCursor(10, 12);
@@ -3890,6 +3914,21 @@ void drawSnakeCell(int col, int row, uint16_t fillColor, uint16_t borderColor) {
 
   gfx->fillRoundRect(x, y, SNAKE_CELL - 2, SNAKE_CELL - 2, 3, fillColor);
   gfx->drawRoundRect(x, y, SNAKE_CELL - 2, SNAKE_CELL - 2, 3, borderColor);
+}
+
+void drawSnakePlayerCell(int col, int row, int playerIndex, bool isHead) {
+  uint16_t fillColor;
+  uint16_t borderColor;
+
+  if (playerIndex == 0) {
+    fillColor = isHead ? RGB565_YELLOW : RGB565_GREEN;
+    borderColor = isHead ? RGB565_WHITE : RGB565_CYAN;
+  } else {
+    fillColor = isHead ? rgb888to565(255, 0, 180) : RGB565_BLUE;
+    borderColor = isHead ? RGB565_WHITE : RGB565_CYAN;
+  }
+
+  drawSnakeCell(col, row, fillColor, borderColor);
 }
 
 void clearSnakeCell(int col, int row) {
@@ -3954,6 +3993,148 @@ void drawSnakePlayArea() {
   drawSnakeBoardFrame();
   drawSnakeFood();
   drawSnakeBody();
+}
+
+int snakeCellIndex(int col, int row) {
+  return row * SNAKE_GRID_COLS + col;
+}
+
+bool snakeNetworkCellOccupied(int col, int row, int ignorePlayer, int ignoreTailIfNotGrowing) {
+  for (int p = 0; p < 2; p++) {
+    int limit = snakeNetLength[p];
+
+    if (p == ignorePlayer && ignoreTailIfNotGrowing) {
+      limit--;
+    }
+
+    for (int i = 0; i < limit; i++) {
+      if (snakeNetX[p][i] == col && snakeNetY[p][i] == row) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+void placeSnakeNetworkFood() {
+  for (int attempt = 0; attempt < 300; attempt++) {
+    int col = random(0, SNAKE_GRID_COLS);
+    int row = random(0, SNAKE_GRID_ROWS);
+
+    if (!snakeNetworkCellOccupied(col, row, -1, false)) {
+      snakeFoodX = col;
+      snakeFoodY = row;
+      return;
+    }
+  }
+
+  for (int row = 0; row < SNAKE_GRID_ROWS; row++) {
+    for (int col = 0; col < SNAKE_GRID_COLS; col++) {
+      if (!snakeNetworkCellOccupied(col, row, -1, false)) {
+        snakeFoodX = col;
+        snakeFoodY = row;
+        return;
+      }
+    }
+  }
+}
+
+void resetSnakeDrawCache() {
+  for (int i = 0; i < SNAKE_MAX_LEN; i++) {
+    snakeDrawOwner[i] = 0;
+    snakeDrawHead[i] = 0;
+  }
+
+  snakeDrawFoodCell = -1;
+  snakeDrawReady = false;
+}
+
+void drawSnakeNetworkGameOverOverlay() {
+  gfx->fillRoundRect(28, 162, 264, 150, 10, RGB565_BLACK);
+  gfx->drawRoundRect(28, 162, 264, 150, 10, RGB565_RED);
+  gfx->drawRoundRect(33, 167, 254, 140, 8, RGB565_YELLOW);
+
+  if (snakeNetWinner == 1) {
+    drawCenteredText("P1 WINS", 188, 3, RGB565_GREEN);
+  } else if (snakeNetWinner == 2) {
+    drawCenteredText("P2 WINS", 188, 3, RGB565_CYAN);
+  } else {
+    drawCenteredText("DRAW", 188, 3, RGB565_YELLOW);
+  }
+
+  char line[32];
+  snprintf(line, sizeof(line), "P1:%d   P2:%d", snakeNetScore[0], snakeNetScore[1]);
+  drawCenteredText(line, 238, 2, RGB565_WHITE);
+  drawCenteredText("Tap to restart", 272, 1, RGB565_CYAN);
+}
+
+void drawSnakeNetworkState(bool fullRedraw) {
+  static uint8_t newOwner[SNAKE_MAX_LEN];
+  static uint8_t newHead[SNAKE_MAX_LEN];
+
+  for (int i = 0; i < SNAKE_MAX_LEN; i++) {
+    newOwner[i] = 0;
+    newHead[i] = 0;
+  }
+
+  for (int p = 0; p < 2; p++) {
+    for (int i = 0; i < snakeNetLength[p]; i++) {
+      int idx = snakeCellIndex(snakeNetX[p][i], snakeNetY[p][i]);
+
+      if (idx >= 0 && idx < SNAKE_MAX_LEN) {
+        newOwner[idx] = p + 1;
+        newHead[idx] = (i == 0) ? 1 : 0;
+      }
+    }
+  }
+
+  if (fullRedraw || !snakeDrawReady) {
+    drawSnakeHud();
+    drawSnakeBoardFrame();
+    drawSnakeControls();
+    resetSnakeDrawCache();
+    snakeDrawReady = true;
+  }
+
+  for (int idx = 0; idx < SNAKE_MAX_LEN; idx++) {
+    if (snakeDrawOwner[idx] == newOwner[idx] && snakeDrawHead[idx] == newHead[idx]) {
+      continue;
+    }
+
+    int col = idx % SNAKE_GRID_COLS;
+    int row = idx / SNAKE_GRID_COLS;
+
+    clearSnakeCell(col, row);
+
+    if (newOwner[idx] > 0) {
+      drawSnakePlayerCell(col, row, newOwner[idx] - 1, newHead[idx] == 1);
+    }
+
+    snakeDrawOwner[idx] = newOwner[idx];
+    snakeDrawHead[idx] = newHead[idx];
+  }
+
+  int newFoodCell = snakeCellIndex(snakeFoodX, snakeFoodY);
+
+  if (snakeDrawFoodCell != newFoodCell) {
+    if (snakeDrawFoodCell >= 0 && snakeDrawFoodCell < SNAKE_MAX_LEN &&
+        newOwner[snakeDrawFoodCell] == 0) {
+      clearSnakeCell(snakeDrawFoodCell % SNAKE_GRID_COLS,
+                     snakeDrawFoodCell / SNAKE_GRID_COLS);
+    }
+
+    snakeDrawFoodCell = newFoodCell;
+  }
+
+  if (newFoodCell >= 0 && newFoodCell < SNAKE_MAX_LEN && newOwner[newFoodCell] == 0) {
+    drawSnakeFood();
+  }
+
+  if (snakeNetGameOver) {
+    drawSnakeHud();
+    drawSnakeNetworkGameOverOverlay();
+  }
 }
 
 void drawSnakeGameOverOverlay() {
@@ -4024,6 +4205,117 @@ void finishSnakeGame() {
 
 void updateSnakeGame() {
   if (appState != STATE_SNAKE_PLAYING) return;
+
+  if (!localGame) {
+    if (!isHost || snakeNetGameOver) return;
+
+    unsigned long now = millis();
+    unsigned long frameMs = SNAKE_FRAME_MS - (unsigned long)constrain((snakeNetScore[0] + snakeNetScore[1]) * 2, 0, 45);
+
+    if (now - snakeLastFrame < frameMs) return;
+    snakeLastFrame = now;
+
+    int nextX[2];
+    int nextY[2];
+    bool willGrow[2];
+    bool willDie[2] = {false, false};
+
+    for (int p = 0; p < 2; p++) {
+      snakeNetDir[p] = snakeNetNextDir[p];
+      nextX[p] = snakeNetX[p][0];
+      nextY[p] = snakeNetY[p][0];
+
+      if (snakeNetDir[p] == SNAKE_DIR_UP) nextY[p]--;
+      if (snakeNetDir[p] == SNAKE_DIR_RIGHT) nextX[p]++;
+      if (snakeNetDir[p] == SNAKE_DIR_DOWN) nextY[p]++;
+      if (snakeNetDir[p] == SNAKE_DIR_LEFT) nextX[p]--;
+
+      willGrow[p] = (nextX[p] == snakeFoodX && nextY[p] == snakeFoodY);
+
+      if (nextX[p] < 0 || nextX[p] >= SNAKE_GRID_COLS ||
+          nextY[p] < 0 || nextY[p] >= SNAKE_GRID_ROWS) {
+        willDie[p] = true;
+      }
+    }
+
+    if (!willDie[0] && !willDie[1]) {
+      if (nextX[0] == nextX[1] && nextY[0] == nextY[1]) {
+        willDie[0] = true;
+        willDie[1] = true;
+      }
+
+      if (nextX[0] == snakeNetX[1][0] && nextY[0] == snakeNetY[1][0] &&
+          nextX[1] == snakeNetX[0][0] && nextY[1] == snakeNetY[0][0]) {
+        willDie[0] = true;
+        willDie[1] = true;
+      }
+    }
+
+    for (int p = 0; p < 2; p++) {
+      if (willDie[p]) continue;
+
+      int ownLimit = willGrow[p] ? snakeNetLength[p] : snakeNetLength[p] - 1;
+
+      for (int i = 0; i < ownLimit; i++) {
+        if (snakeNetX[p][i] == nextX[p] && snakeNetY[p][i] == nextY[p]) {
+          willDie[p] = true;
+          break;
+        }
+      }
+
+      int other = 1 - p;
+      int otherLimit = willGrow[other] ? snakeNetLength[other] : snakeNetLength[other] - 1;
+
+      for (int i = 0; i < otherLimit && !willDie[p]; i++) {
+        if (snakeNetX[other][i] == nextX[p] && snakeNetY[other][i] == nextY[p]) {
+          willDie[p] = true;
+        }
+      }
+    }
+
+    for (int p = 0; p < 2; p++) {
+      if (willDie[p]) {
+        snakeNetAlive[p] = false;
+        continue;
+      }
+
+      if (willGrow[p] && snakeNetLength[p] < SNAKE_MAX_LEN) {
+        snakeNetLength[p]++;
+        snakeNetScore[p]++;
+      }
+
+      for (int i = snakeNetLength[p] - 1; i > 0; i--) {
+        snakeNetX[p][i] = snakeNetX[p][i - 1];
+        snakeNetY[p][i] = snakeNetY[p][i - 1];
+      }
+
+      snakeNetX[p][0] = nextX[p];
+      snakeNetY[p][0] = nextY[p];
+    }
+
+    if (!snakeNetAlive[0] || !snakeNetAlive[1]) {
+      snakeNetGameOver = true;
+
+      if (snakeNetAlive[0] && !snakeNetAlive[1]) {
+        snakeNetWinner = 1;
+      } else if (!snakeNetAlive[0] && snakeNetAlive[1]) {
+        snakeNetWinner = 2;
+      } else {
+        snakeNetWinner = 3;
+      }
+
+      beepDraw();
+    } else if (willGrow[0] || willGrow[1]) {
+      placeSnakeNetworkFood();
+      beepMove();
+    }
+
+    drawSnakeHud();
+    drawSnakeNetworkState(false);
+    sendSnakeState();
+    return;
+  }
+
   if (snakeGameOver) return;
 
   unsigned long now = millis();
@@ -4087,6 +4379,154 @@ void updateSnakeGame() {
   drawSnakeCell(snakeX[0], snakeY[0], RGB565_YELLOW, RGB565_WHITE);
 }
 
+void setSnakeNetworkDirection(int playerIndex, int dir) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+  if (snakeDirectionsAreOpposite(dir, snakeNetDir[playerIndex])) return;
+  if (snakeDirectionsAreOpposite(dir, snakeNetNextDir[playerIndex])) return;
+
+  snakeNetNextDir[playerIndex] = dir;
+}
+
+void applySnakeDirectionInput(int dir) {
+  if (localGame) {
+    setSnakeDirection(dir);
+    return;
+  }
+
+  int playerIndex = (myPlayer == '2') ? 1 : 0;
+  setSnakeNetworkDirection(playerIndex, dir);
+
+  if (!isHost) {
+    sendNetMessage("SN_DIR:" + String(dir));
+  }
+}
+
+void sendSnakeState() {
+  if (localGame || !isHost || !networkConnected) return;
+
+  String msg = "SN_STATE:";
+  msg.reserve(80 + (snakeNetLength[0] + snakeNetLength[1]) * 4);
+
+  msg += String(snakeNetGameOver ? 1 : 0);
+  msg += ",";
+  msg += String(snakeNetWinner);
+  msg += ",";
+  msg += String(snakeFoodX);
+  msg += ",";
+  msg += String(snakeFoodY);
+  msg += ",";
+  msg += String(snakeNetScore[0]);
+  msg += ",";
+  msg += String(snakeNetScore[1]);
+  msg += ",";
+  msg += String(snakeNetAlive[0] ? 1 : 0);
+  msg += ",";
+  msg += String(snakeNetAlive[1] ? 1 : 0);
+
+  for (int p = 0; p < 2; p++) {
+    msg += ",";
+    msg += String(snakeNetLength[p]);
+
+    for (int i = 0; i < snakeNetLength[p]; i++) {
+      msg += ",";
+      msg += String(snakeCellIndex(snakeNetX[p][i], snakeNetY[p][i]));
+    }
+  }
+
+  sendNetMessage(msg);
+}
+
+void applyRemoteSnakeState(const String &payload) {
+  activeNetworkGame = NETWORK_GAME_SNAKE;
+
+  int start = 0;
+  int gameOverValue, winnerValue, foodX, foodY, scoreP1, scoreP2, aliveP1, aliveP2;
+
+  if (!readCsvInt(payload, start, gameOverValue)) return;
+  if (!readCsvInt(payload, start, winnerValue)) return;
+  if (!readCsvInt(payload, start, foodX)) return;
+  if (!readCsvInt(payload, start, foodY)) return;
+  if (!readCsvInt(payload, start, scoreP1)) return;
+  if (!readCsvInt(payload, start, scoreP2)) return;
+  if (!readCsvInt(payload, start, aliveP1)) return;
+  if (!readCsvInt(payload, start, aliveP2)) return;
+
+  snakeNetGameOver = (gameOverValue != 0);
+  snakeNetWinner = winnerValue;
+  snakeFoodX = constrain(foodX, 0, SNAKE_GRID_COLS - 1);
+  snakeFoodY = constrain(foodY, 0, SNAKE_GRID_ROWS - 1);
+  snakeNetScore[0] = scoreP1;
+  snakeNetScore[1] = scoreP2;
+  snakeNetAlive[0] = (aliveP1 != 0);
+  snakeNetAlive[1] = (aliveP2 != 0);
+
+  for (int p = 0; p < 2; p++) {
+    int len;
+
+    if (!readCsvInt(payload, start, len)) return;
+
+    snakeNetLength[p] = constrain(len, 0, SNAKE_MAX_LEN);
+
+    for (int i = 0; i < snakeNetLength[p]; i++) {
+      int cell;
+
+      if (!readCsvInt(payload, start, cell)) return;
+
+      cell = constrain(cell, 0, SNAKE_MAX_LEN - 1);
+      snakeNetX[p][i] = cell % SNAKE_GRID_COLS;
+      snakeNetY[p][i] = cell / SNAKE_GRID_COLS;
+    }
+
+    if (snakeNetLength[p] > 1) {
+      int dx = snakeNetX[p][0] - snakeNetX[p][1];
+      int dy = snakeNetY[p][0] - snakeNetY[p][1];
+
+      if (dx > 0) snakeNetDir[p] = SNAKE_DIR_RIGHT;
+      else if (dx < 0) snakeNetDir[p] = SNAKE_DIR_LEFT;
+      else if (dy > 0) snakeNetDir[p] = SNAKE_DIR_DOWN;
+      else if (dy < 0) snakeNetDir[p] = SNAKE_DIR_UP;
+
+      if (snakeDirectionsAreOpposite(snakeNetNextDir[p], snakeNetDir[p])) {
+        snakeNetNextDir[p] = snakeNetDir[p];
+      }
+    }
+  }
+
+  drawSnakeHud();
+  drawSnakeNetworkState(false);
+}
+
+void newSnakeNetworkGame() {
+  activeNetworkGame = NETWORK_GAME_SNAKE;
+  localGame = false;
+  appState = STATE_SNAKE_PLAYING;
+  snakeNetLength[0] = 5;
+  snakeNetLength[1] = 5;
+  snakeNetDir[0] = SNAKE_DIR_RIGHT;
+  snakeNetDir[1] = SNAKE_DIR_LEFT;
+  snakeNetNextDir[0] = SNAKE_DIR_RIGHT;
+  snakeNetNextDir[1] = SNAKE_DIR_LEFT;
+  snakeNetScore[0] = 0;
+  snakeNetScore[1] = 0;
+  snakeNetAlive[0] = true;
+  snakeNetAlive[1] = true;
+  snakeNetGameOver = false;
+  snakeNetWinner = 0;
+
+  for (int i = 0; i < snakeNetLength[0]; i++) {
+    snakeNetX[0][i] = 5 - i;
+    snakeNetY[0][i] = 7;
+    snakeNetX[1][i] = 14 + i;
+    snakeNetY[1][i] = 15;
+  }
+
+  placeSnakeNetworkFood();
+  resetSnakeDrawCache();
+  snakeLastFrame = millis();
+  gfx->fillScreen(RGB565_BLACK);
+  drawSnakeNetworkState(true);
+}
+
 void startSnakeLocalGame() {
   activeNetworkGame = NETWORK_GAME_SNAKE;
   stopNetwork();
@@ -4098,8 +4538,33 @@ void startSnakeLocalGame() {
 void startSnakeNetworkGame() {
   activeNetworkGame = NETWORK_GAME_SNAKE;
   localGame = false;
+  appState = STATE_SNAKE_PLAYING;
   beepStart();
-  drawSnakePlaceholderScreen(isHost ? "SNAKE HOST" : "SNAKE JOIN");
+
+  if (isHost) {
+    newSnakeNetworkGame();
+    sendSnakeState();
+    return;
+  }
+
+  snakeNetLength[0] = 0;
+  snakeNetLength[1] = 0;
+  snakeNetDir[0] = SNAKE_DIR_RIGHT;
+  snakeNetDir[1] = SNAKE_DIR_LEFT;
+  snakeNetNextDir[0] = SNAKE_DIR_RIGHT;
+  snakeNetNextDir[1] = SNAKE_DIR_LEFT;
+  snakeNetScore[0] = 0;
+  snakeNetScore[1] = 0;
+  snakeNetAlive[0] = true;
+  snakeNetAlive[1] = true;
+  snakeNetGameOver = false;
+  snakeNetWinner = 0;
+  resetSnakeDrawCache();
+  gfx->fillScreen(RGB565_BLACK);
+  drawSnakeHud();
+  drawSnakeBoardFrame();
+  drawSnakeControls();
+  drawCenteredText("Waiting host", 184, 2, RGB565_YELLOW);
 }
 
 void drawPocketTanksMenuScreen() {
@@ -5239,7 +5704,7 @@ void returnToHome(bool notifyPeer) {
 // ============================================================================
 // Text protocol over TCP. Messages are line-based and intentionally simple:
 // START:<game>, NEW:<game>, MOVE:col,row, RPS_CHOICE:n, PT_* messages,
-// PN_* messages, BR_LOSE, LEAVE. Snake currently uses only START/NEW/LEAVE.
+// PN_* messages, SN_* messages, BR_LOSE, LEAVE.
 void handleNetMessage(String msg) {
   msg.trim();
 
@@ -5292,6 +5757,26 @@ void handleNetMessage(String msg) {
   if (msg.startsWith("PN_STATE:")) {
     activeNetworkGame = NETWORK_GAME_PONG;
     applyRemotePongState(msg.substring(9));
+    return;
+  }
+
+  if (msg.startsWith("SN_DIR:")) {
+    activeNetworkGame = NETWORK_GAME_SNAKE;
+
+    if (isHost) {
+      setSnakeNetworkDirection(1, msg.substring(7).toInt());
+    }
+
+    return;
+  }
+
+  if (msg.startsWith("SN_STATE:")) {
+    activeNetworkGame = NETWORK_GAME_SNAKE;
+
+    if (!isHost) {
+      applyRemoteSnakeState(msg.substring(9));
+    }
+
     return;
   }
 
@@ -5360,6 +5845,7 @@ void pollNetwork() {
         appState == STATE_PT_PLAYING || appState == STATE_PT_RESULT ||
         appState == STATE_BREAKOUT_PLAYING ||
         appState == STATE_PONG_PLAYING ||
+        appState == STATE_SNAKE_PLAYING ||
         appState == STATE_SNAKE_PLACEHOLDER) {
       gfx->fillScreen(RGB565_BLACK);
       drawCenteredText("Conexiune pierduta", 180, 2, RGB565_RED);
@@ -5690,51 +6176,79 @@ void handleSnakePlaceholderTouch(int x, int y) {
 void handleSnakePlayingTouch(int x, int y) {
   if (inRect(x, y, btnSnakeMenuX, btnSnakeMenuY, btnSnakeMenuW, btnSnakeMenuH)) {
     beepClick();
-    drawSnakeMenuScreen();
+
+    if (localGame) {
+      drawSnakeMenuScreen();
+    } else {
+      returnToMenu(true);
+    }
+
     return;
   }
 
-  if (snakeGameOver) {
-    beepStart();
-    newSnakeGame();
+  if ((localGame && snakeGameOver) || (!localGame && snakeNetGameOver)) {
+    if (localGame) {
+      beepStart();
+      newSnakeGame();
+    } else {
+      beepStart();
+      sendNetMessage(buildNetworkMessage("NEW"));
+      startNetworkGame();
+    }
+
     return;
   }
 
   if (inRect(x, y, btnSnakeUpX, btnSnakeUpY, btnSnakeDirW, btnSnakeDirH)) {
     beepClick();
-    setSnakeDirection(SNAKE_DIR_UP);
+    applySnakeDirectionInput(SNAKE_DIR_UP);
     return;
   }
 
   if (inRect(x, y, btnSnakeLeftX, btnSnakeLeftY, btnSnakeDirW, btnSnakeDirH)) {
     beepClick();
-    setSnakeDirection(SNAKE_DIR_LEFT);
+    applySnakeDirectionInput(SNAKE_DIR_LEFT);
     return;
   }
 
   if (inRect(x, y, btnSnakeDownX, btnSnakeDownY, btnSnakeDirW, btnSnakeDirH)) {
     beepClick();
-    setSnakeDirection(SNAKE_DIR_DOWN);
+    applySnakeDirectionInput(SNAKE_DIR_DOWN);
     return;
   }
 
   if (inRect(x, y, btnSnakeRightX, btnSnakeRightY, btnSnakeDirW, btnSnakeDirH)) {
     beepClick();
-    setSnakeDirection(SNAKE_DIR_RIGHT);
+    applySnakeDirectionInput(SNAKE_DIR_RIGHT);
     return;
   }
 
   if (inRect(x, y, SNAKE_BOARD_X, SNAKE_BOARD_Y,
              SNAKE_GRID_COLS * SNAKE_CELL, SNAKE_GRID_ROWS * SNAKE_CELL)) {
-    int headCenterX = SNAKE_BOARD_X + snakeX[0] * SNAKE_CELL + SNAKE_CELL / 2;
-    int headCenterY = SNAKE_BOARD_Y + snakeY[0] * SNAKE_CELL + SNAKE_CELL / 2;
+    int headCol;
+    int headRow;
+
+    if (localGame) {
+      headCol = snakeX[0];
+      headRow = snakeY[0];
+    } else {
+      int playerIndex = (myPlayer == '2') ? 1 : 0;
+
+      if (snakeNetLength[playerIndex] <= 0) return;
+
+      headCol = snakeNetX[playerIndex][0];
+      headRow = snakeNetY[playerIndex][0];
+    }
+
+    int headCenterX = SNAKE_BOARD_X + headCol * SNAKE_CELL + SNAKE_CELL / 2;
+    int headCenterY = SNAKE_BOARD_Y + headRow * SNAKE_CELL + SNAKE_CELL / 2;
     int dx = x - headCenterX;
     int dy = y - headCenterY;
 
     if (abs(dx) > abs(dy)) {
-      setSnakeDirection(dx > 0 ? SNAKE_DIR_RIGHT : SNAKE_DIR_LEFT);
+      applySnakeDirectionInput(dx > 0 ? SNAKE_DIR_RIGHT : SNAKE_DIR_LEFT);
     } else {
-      setSnakeDirection(dy > 0 ? SNAKE_DIR_DOWN : SNAKE_DIR_UP);
+      applySnakeDirectionInput(dy > 0 ? SNAKE_DIR_DOWN : SNAKE_DIR_UP);
     }
 
     return;
