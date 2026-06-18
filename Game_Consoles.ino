@@ -1,6 +1,22 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 6.9 - 2026-06-18 08:18 - Reduced Snake movement flicker by switching
+// from full-board redraws to incremental cell updates during movement.
+// Version 6.8 - 2026-06-18 08:06 - Implemented local Snake gameplay with a
+// timed grid loop, food spawning, collision detection, score HUD, touch
+// direction controls, restart, and menu return.
+// Version 6.7 - 2026-06-18 07:46 - Added Snake to the Games menu with a
+// dedicated Local, Host, Join, and Back mode menu wired into the shared
+// network setup flow.
+// Version 6.6 - 2026-06-18 07:11 - Improved network Pong Player 2 paddle
+// collision by preserving client-owned paddle state, adding remote-paddle hit
+// forgiveness, and predicting local bounce.
+// Version 6.5 - 2026-06-17 23:14 - Smoothed network Pong ball movement by
+// sending velocity in PN_STATE, throttling host broadcasts, and predicting
+// ball motion locally between received state packets.
+// Version 6.4 - 2026-06-17 22:44 - Added Host/Join network gameplay for
+// Pong with host-authoritative ball physics and synced paddle/score state.
 // Version 6.3 - 2026-06-17 22:28 - Added Pong to the Games menu with a
 // local playable portrait paddle game and arcade-style menu.
 // Version 6.2 - 2026-06-17 22:07 - Added Host/Join network gameplay for
@@ -153,8 +169,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 6.3";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V63-2026061722";
+const char *APP_VERSION_TEXT = "Version 6.9";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V69-2026061808";
 
 
 
@@ -255,6 +271,9 @@ enum AppState {
   STATE_PONG,
   STATE_PONG_PLAYING,
   STATE_PONG_PLACEHOLDER,
+  STATE_SNAKE,
+  STATE_SNAKE_PLAYING,
+  STATE_SNAKE_PLACEHOLDER,
   STATE_EMPTY_GAME,
   STATE_MENU,
   STATE_SETTINGS,
@@ -277,7 +296,9 @@ enum NetworkGameType {
   NETWORK_GAME_TTT,
   NETWORK_GAME_RPS,
   NETWORK_GAME_PT,
-  NETWORK_GAME_BREAKOUT
+  NETWORK_GAME_BREAKOUT,
+  NETWORK_GAME_PONG,
+  NETWORK_GAME_SNAKE
 };
 
 NetworkGameType activeNetworkGame = NETWORK_GAME_TTT;
@@ -417,7 +438,9 @@ static const int PONG_BALL_R = 4;
 static const int PONG_SCORE_LIMIT = 5;
 static const int PONG_PLAYER_SPEED = 9;
 static const int PONG_CPU_SPEED = 5;
+static const int PONG_REMOTE_HIT_MARGIN = 14;
 static const unsigned long PONG_FRAME_MS = 20;
+static const unsigned long PONG_NET_STATE_MS = 33;
 
 const int btnPongLeftX = 18;
 const int btnPongLeftY = 410;
@@ -446,12 +469,57 @@ int pongOldPlayerX = -1;
 int pongOldCpuX = -1;
 int pongPlayerScore = 0;
 int pongCpuScore = 0;
+int pongWinner = 0;
 bool pongGameOver = false;
 bool pongPlayerWon = false;
 bool pongTouchDown = false;
 int pongTouchX = -1;
 int pongTouchY = -1;
 unsigned long pongLastFrame = 0;
+int pongLastSentPaddleX = -1;
+unsigned long pongLastStateSendTime = 0;
+
+// Snake local gameplay uses a 20 x 22 grid in the upper play area and a simple
+// directional pad in the bottom strip. Network mode is still menu-only for now.
+static const int SNAKE_GRID_COLS = 20;
+static const int SNAKE_GRID_ROWS = 22;
+static const int SNAKE_CELL = 14;
+static const int SNAKE_BOARD_X = 20;
+static const int SNAKE_BOARD_Y = 50;
+static const int SNAKE_MAX_LEN = SNAKE_GRID_COLS * SNAKE_GRID_ROWS;
+static const unsigned long SNAKE_FRAME_MS = 145;
+
+static const int SNAKE_DIR_UP = 0;
+static const int SNAKE_DIR_RIGHT = 1;
+static const int SNAKE_DIR_DOWN = 2;
+static const int SNAKE_DIR_LEFT = 3;
+
+const int btnSnakeMenuX = 230;
+const int btnSnakeMenuY = 6;
+const int btnSnakeMenuW = 78;
+const int btnSnakeMenuH = 28;
+
+const int btnSnakeUpX = 124;
+const int btnSnakeUpY = 365;
+const int btnSnakeDirW = 72;
+const int btnSnakeDirH = 42;
+const int btnSnakeLeftX = 36;
+const int btnSnakeLeftY = 412;
+const int btnSnakeDownX = 124;
+const int btnSnakeDownY = 412;
+const int btnSnakeRightX = 212;
+const int btnSnakeRightY = 412;
+
+int snakeX[SNAKE_MAX_LEN];
+int snakeY[SNAKE_MAX_LEN];
+int snakeLength = 0;
+int snakeDir = SNAKE_DIR_RIGHT;
+int snakeNextDir = SNAKE_DIR_RIGHT;
+int snakeFoodX = 0;
+int snakeFoodY = 0;
+int snakeScore = 0;
+bool snakeGameOver = false;
+unsigned long snakeLastFrame = 0;
 
 // Touch edge detection and debounce. Touch actions fire once per press, not on
 // every loop while the finger is still down.
@@ -525,6 +593,7 @@ const int btnGamesHomeH = 45;
 const int btnGamesNavLeftX = 35;
 const int btnGamesNavRightX = 170;
 const int btnGamesNavW = 115;
+const int btnGamesSnakeY = 135;
 const int btnGamesBreakoutY = 205;
 const int btnGamesPongY = 275;
 
@@ -1856,6 +1925,72 @@ void drawPongArcadeHome() {
   drawPongTitleSign();
 }
 
+void drawSnakeTitleSign() {
+  uint16_t signFill = rgb888to565(12, 10, 28);
+  uint16_t arcadeOrange = rgb888to565(255, 128, 0);
+  uint16_t arcadeBlue = rgb888to565(0, 65, 210);
+  uint16_t arcadeMagenta = rgb888to565(255, 0, 180);
+
+  gfx->fillRoundRect(18, 18, 284, 92, 10, signFill);
+  gfx->drawRoundRect(18, 18, 284, 92, 10, RGB565_GREEN);
+  gfx->drawRoundRect(22, 22, 276, 84, 8, RGB565_CYAN);
+  gfx->drawRoundRect(26, 26, 268, 76, 7, arcadeOrange);
+
+  for (int x = 38; x < 286; x += 20) {
+    gfx->fillCircle(x, 30, 3, arcadeMagenta);
+    gfx->drawCircle(x, 30, 4, RGB565_YELLOW);
+    gfx->fillCircle(x, 98, 3, arcadeBlue);
+    gfx->drawCircle(x, 98, 4, RGB565_CYAN);
+  }
+
+  drawPixelText("SNAKE", 58, 48, 5, RGB565_GREEN, arcadeBlue);
+}
+
+void drawSnakeBoardDecor() {
+  uint16_t gridColor = rgb888to565(20, 90, 55);
+  uint16_t darkPanel = rgb888to565(2, 14, 10);
+  uint16_t foodColor = RGB565_RED;
+
+  gfx->fillRoundRect(42, 132, 236, 210, 8, darkPanel);
+  gfx->drawRoundRect(42, 132, 236, 210, 8, RGB565_GREEN);
+  gfx->drawRoundRect(47, 137, 226, 200, 6, RGB565_CYAN);
+
+  for (int x = 58; x <= 262; x += 24) {
+    gfx->drawLine(x, 148, x, 326, gridColor);
+  }
+
+  for (int y = 148; y <= 326; y += 24) {
+    gfx->drawLine(58, y, 262, y, gridColor);
+  }
+
+  int snakeX[] = {96, 120, 144, 168, 192, 216};
+  int snakeY[] = {254, 254, 254, 230, 230, 230};
+
+  for (int i = 0; i < 6; i++) {
+    gfx->fillRoundRect(snakeX[i] - 9, snakeY[i] - 9, 18, 18, 5, RGB565_GREEN);
+    gfx->drawRoundRect(snakeX[i] - 9, snakeY[i] - 9, 18, 18, 5, RGB565_WHITE);
+  }
+
+  gfx->fillCircle(216, 230, 3, RGB565_BLACK);
+  gfx->fillCircle(220, 230, 3, RGB565_BLACK);
+  gfx->fillCircle(108, 194, 7, foodColor);
+  gfx->drawCircle(108, 194, 8, RGB565_YELLOW);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565_CYAN);
+  gfx->setCursor(92, 350);
+  gfx->print("GROW  SURVIVE  SCORE");
+}
+
+void drawSnakeArcadeHome() {
+  fillArcadeGradient();
+  drawArcadeStars();
+  drawArcadeCabinets();
+  drawArcadeFloor();
+  drawSnakeBoardDecor();
+  drawSnakeTitleSign();
+}
+
 void drawTransparentArcadeButton(int x, int y, int w, int h, const char *label, int textSize) {
   uint16_t mainTextColor = RGB565_YELLOW;
   uint16_t secondTextColor = RGB565_RED;
@@ -2744,6 +2879,8 @@ void drawGamesMoreScreen() {
   appState = STATE_GAMES_MORE;
   drawGamesArcadeBackground();
 
+  drawTransparentArcadeButton(btnGamesX, btnGamesSnakeY, btnGamesW, btnGamesH, "SNAKE", 2);
+
   drawTransparentArcadeButton(btnGamesX, btnGamesBreakoutY, btnGamesW, btnGamesH, "BREAKOUT", 2);
 
   drawTransparentArcadeButton(btnGamesX, btnGamesPongY, btnGamesW, btnGamesH, "PONG", 2);
@@ -3199,14 +3336,19 @@ void drawBreakoutPlaceholderScreen(const char *title) {
 // ============================================================================
 // PONG GAME
 // ============================================================================
-// Local Pong: the player controls the lower paddle, while a simple CPU tracks
-// the ball with a capped movement speed. First to five points wins.
+// Pong runs locally against CPU or over network. Network mode uses host-owned
+// world coordinates and synchronizes paddle, ball, and score state to the joiner.
 void drawPongHud() {
   gfx->fillRect(0, 0, screenW, PONG_HUD_H, RGB565_BLACK);
   gfx->drawLine(0, PONG_HUD_H, screenW - 1, PONG_HUD_H, RGB565_CYAN);
 
   char line[48];
-  snprintf(line, sizeof(line), "PLAYER %d   CPU %d", pongPlayerScore, pongCpuScore);
+  if (localGame) {
+    snprintf(line, sizeof(line), "PLAYER %d   CPU %d", pongPlayerScore, pongCpuScore);
+  } else {
+    snprintf(line, sizeof(line), "P1 %d   P2 %d", pongPlayerScore, pongCpuScore);
+  }
+
   drawCenteredText(line, 9, 2, RGB565_WHITE);
 }
 
@@ -3279,22 +3421,34 @@ void drawPongEndOverlay() {
   gfx->fillRoundRect(24, 178, 272, 124, 10, RGB565_BLACK);
   gfx->drawRoundRect(24, 178, 272, 124, 10, RGB565_YELLOW);
 
-  drawCenteredText(pongPlayerWon ? "YOU WIN" : "CPU WINS", 205, 3,
-                   pongPlayerWon ? RGB565_GREEN : RGB565_RED);
+  const char *title = "CPU WINS";
+
+  if (localGame) {
+    title = (pongWinner == 1) ? "YOU WIN" : "CPU WINS";
+  } else {
+    title = pongPlayerWon ? "YOU WIN" : "YOU LOSE";
+  }
+
+  drawCenteredText(title, 205, 3, pongPlayerWon ? RGB565_GREEN : RGB565_RED);
 
   char line[32];
   snprintf(line, sizeof(line), "%d - %d", pongPlayerScore, pongCpuScore);
   drawCenteredText(line, 248, 2, RGB565_WHITE);
-  drawCenteredText("Tap to restart", 280, 1, RGB565_CYAN);
+  drawCenteredText(localGame ? "Tap to restart" : "Tap play again", 280, 1, RGB565_CYAN);
 }
 
-void finishPongGame(bool playerWon) {
+void finishPongGame(int winnerPlayer) {
+  if (pongGameOver) return;
+
+  pongWinner = winnerPlayer;
   pongGameOver = true;
-  pongPlayerWon = playerWon;
+  pongPlayerWon = localGame ? (winnerPlayer == 1) :
+                  ((myPlayer == '1' && winnerPlayer == 1) ||
+                   (myPlayer == '2' && winnerPlayer == 2));
   drawPongHud();
   drawPongEndOverlay();
 
-  if (playerWon) {
+  if (pongPlayerWon) {
     beepWin();
   } else {
     beepDraw();
@@ -3304,17 +3458,174 @@ void finishPongGame(bool playerWon) {
 void newPongMatch() {
   pongPlayerScore = 0;
   pongCpuScore = 0;
+  pongWinner = 0;
   pongGameOver = false;
   pongPlayerWon = false;
   pongPlayerX = (screenW - PONG_PADDLE_W) / 2;
   pongCpuX = (screenW - PONG_PADDLE_W) / 2;
   pongOldPlayerX = -1;
   pongOldCpuX = -1;
+  pongLastSentPaddleX = -1;
+  pongLastStateSendTime = 0;
 
   drawPongCourt();
   resetPongBall(1);
   drawPongEntities();
   pongLastFrame = millis();
+}
+
+int getLocalPongPaddleX() {
+  if (!localGame && myPlayer == '2') {
+    return pongCpuX;
+  }
+
+  return pongPlayerX;
+}
+
+void setLocalPongPaddleX(int value) {
+  value = constrain(value, 4, screenW - PONG_PADDLE_W - 4);
+
+  if (!localGame && myPlayer == '2') {
+    pongCpuX = value;
+  } else {
+    pongPlayerX = value;
+  }
+}
+
+void sendLocalPongPaddleIfNeeded() {
+  if (localGame || !networkConnected) return;
+
+  int x = getLocalPongPaddleX();
+
+  if (x == pongLastSentPaddleX) return;
+
+  pongLastSentPaddleX = x;
+  sendNetMessage("PN_PAD:" + String(x));
+}
+
+void sendPongState(bool force = false) {
+  if (localGame || !isHost || !networkConnected) return;
+
+  unsigned long now = millis();
+
+  if (!force && now - pongLastStateSendTime < PONG_NET_STATE_MS) {
+    return;
+  }
+
+  pongLastStateSendTime = now;
+
+  String msg = "PN_STATE:";
+  msg += String((int)pongBallX);
+  msg += ",";
+  msg += String((int)pongBallY);
+  msg += ",";
+  msg += String((int)(pongBallVX * 100.0f));
+  msg += ",";
+  msg += String((int)(pongBallVY * 100.0f));
+  msg += ",";
+  msg += String(pongPlayerX);
+  msg += ",";
+  msg += String(pongCpuX);
+  msg += ",";
+  msg += String(pongPlayerScore);
+  msg += ",";
+  msg += String(pongCpuScore);
+  msg += ",";
+  msg += String(pongWinner);
+  sendNetMessage(msg);
+}
+
+bool readCsvInt(const String &payload, int &start, int &value) {
+  int comma = payload.indexOf(',', start);
+  String part;
+
+  if (comma < 0) {
+    part = payload.substring(start);
+    start = payload.length();
+  } else {
+    part = payload.substring(start, comma);
+    start = comma + 1;
+  }
+
+  if (part.length() == 0) return false;
+
+  value = part.toInt();
+  return true;
+}
+
+void applyRemotePongPaddle(int x) {
+  activeNetworkGame = NETWORK_GAME_PONG;
+  x = constrain(x, 4, screenW - PONG_PADDLE_W - 4);
+
+  if (isHost) {
+    pongCpuX = x;
+  } else {
+    pongPlayerX = x;
+  }
+}
+
+void applyRemotePongState(const String &payload) {
+  activeNetworkGame = NETWORK_GAME_PONG;
+
+  int start = 0;
+  int ballX, ballY, ballVX100, ballVY100, p1X, p2X, p1Score, p2Score, winner;
+
+  if (!readCsvInt(payload, start, ballX)) return;
+  if (!readCsvInt(payload, start, ballY)) return;
+  if (!readCsvInt(payload, start, ballVX100)) return;
+  if (!readCsvInt(payload, start, ballVY100)) return;
+  if (!readCsvInt(payload, start, p1X)) return;
+  if (!readCsvInt(payload, start, p2X)) return;
+  if (!readCsvInt(payload, start, p1Score)) return;
+  if (!readCsvInt(payload, start, p2Score)) return;
+  if (!readCsvInt(payload, start, winner)) return;
+
+  bool redrawCourt = (p1Score != pongPlayerScore) ||
+                     (p2Score != pongCpuScore) ||
+                     (winner != pongWinner);
+
+  pongBallX = ballX;
+  pongBallY = ballY;
+  pongBallVX = (float)ballVX100 / 100.0f;
+  pongBallVY = (float)ballVY100 / 100.0f;
+  pongPlayerX = constrain(p1X, 4, screenW - PONG_PADDLE_W - 4);
+
+  // Player 2 owns the upper paddle locally. Keeping it from being overwritten
+  // by slightly older host state avoids visible paddle snap-back near hits.
+  if (myPlayer != '2') {
+    pongCpuX = constrain(p2X, 4, screenW - PONG_PADDLE_W - 4);
+  }
+
+  pongPlayerScore = p1Score;
+  pongCpuScore = p2Score;
+
+  if (redrawCourt) {
+    pongOldBallX = -1;
+    pongOldBallY = -1;
+    pongOldPlayerX = -1;
+    pongOldCpuX = -1;
+    drawPongCourt();
+  }
+
+  if (winner > 0) {
+    finishPongGame(winner);
+    return;
+  }
+}
+
+void predictPongClientPaddleBounce() {
+  if (localGame || isHost || myPlayer != '2') return;
+  if (pongBallVY >= 0) return;
+  if (pongBallY - PONG_BALL_R > PONG_CPU_Y + PONG_PADDLE_H) return;
+  if (pongBallY + PONG_BALL_R < PONG_CPU_Y) return;
+  if (pongBallX < pongCpuX - PONG_BALL_R - PONG_REMOTE_HIT_MARGIN) return;
+  if (pongBallX > pongCpuX + PONG_PADDLE_W + PONG_BALL_R + PONG_REMOTE_HIT_MARGIN) return;
+
+  pongBallY = PONG_CPU_Y + PONG_PADDLE_H + PONG_BALL_R;
+  pongBallVY = fabs(pongBallVY);
+
+  float offset = (pongBallX - (pongCpuX + PONG_PADDLE_W / 2.0)) / (PONG_PADDLE_W / 2.0);
+  pongBallVX = offset * 3.8;
 }
 
 void updatePongGame() {
@@ -3326,30 +3637,58 @@ void updatePongGame() {
 
   if (pongGameOver) return;
 
+  int localPaddleX = getLocalPongPaddleX();
+
   if (pongTouchDown &&
       inRect(pongTouchX, pongTouchY, btnPongLeftX, btnPongLeftY, btnPongLeftW, btnPongLeftH)) {
-    pongPlayerX -= PONG_PLAYER_SPEED;
+    localPaddleX -= PONG_PLAYER_SPEED;
   }
 
   if (pongTouchDown &&
       inRect(pongTouchX, pongTouchY, btnPongRightX, btnPongRightY, btnPongRightW, btnPongRightH)) {
-    pongPlayerX += PONG_PLAYER_SPEED;
+    localPaddleX += PONG_PLAYER_SPEED;
   }
 
   if (pongTouchDown && pongTouchY > 255 && pongTouchY < PONG_PLAY_BOTTOM) {
-    pongPlayerX = pongTouchX - PONG_PADDLE_W / 2;
+    localPaddleX = pongTouchX - PONG_PADDLE_W / 2;
   }
 
-  pongPlayerX = constrain(pongPlayerX, 4, screenW - PONG_PADDLE_W - 4);
+  setLocalPongPaddleX(localPaddleX);
+  sendLocalPongPaddleIfNeeded();
 
-  int cpuTargetX = (int)pongBallX - PONG_PADDLE_W / 2;
-  if (pongCpuX + PONG_PADDLE_W / 2 < cpuTargetX + PONG_PADDLE_W / 2) {
-    pongCpuX += PONG_CPU_SPEED;
-  } else if (pongCpuX + PONG_PADDLE_W / 2 > cpuTargetX + PONG_PADDLE_W / 2) {
-    pongCpuX -= PONG_CPU_SPEED;
+  if (!localGame && !isHost) {
+    pongBallX += pongBallVX;
+    pongBallY += pongBallVY;
+
+    if (pongBallX <= PONG_BALL_R) {
+      pongBallX = PONG_BALL_R;
+      pongBallVX = fabs(pongBallVX);
+    } else if (pongBallX >= screenW - PONG_BALL_R) {
+      pongBallX = screenW - PONG_BALL_R;
+      pongBallVX = -fabs(pongBallVX);
+    }
+
+    if (pongBallY < PONG_PLAY_TOP) {
+      pongBallY = PONG_PLAY_TOP;
+    } else if (pongBallY > PONG_PLAY_BOTTOM) {
+      pongBallY = PONG_PLAY_BOTTOM;
+    }
+
+    predictPongClientPaddleBounce();
+    drawPongEntities();
+    return;
   }
 
-  pongCpuX = constrain(pongCpuX, 4, screenW - PONG_PADDLE_W - 4);
+  if (localGame) {
+    int cpuTargetX = (int)pongBallX - PONG_PADDLE_W / 2;
+    if (pongCpuX + PONG_PADDLE_W / 2 < cpuTargetX + PONG_PADDLE_W / 2) {
+      pongCpuX += PONG_CPU_SPEED;
+    } else if (pongCpuX + PONG_PADDLE_W / 2 > cpuTargetX + PONG_PADDLE_W / 2) {
+      pongCpuX -= PONG_CPU_SPEED;
+    }
+
+    pongCpuX = constrain(pongCpuX, 4, screenW - PONG_PADDLE_W - 4);
+  }
 
   pongBallX += pongBallVX;
   pongBallY += pongBallVY;
@@ -3364,11 +3703,13 @@ void updatePongGame() {
     beepClick();
   }
 
+  int cpuHitMargin = (!localGame && isHost) ? PONG_REMOTE_HIT_MARGIN : 0;
+
   if (pongBallVY < 0 &&
       pongBallY - PONG_BALL_R <= PONG_CPU_Y + PONG_PADDLE_H &&
       pongBallY + PONG_BALL_R >= PONG_CPU_Y &&
-      pongBallX >= pongCpuX - PONG_BALL_R &&
-      pongBallX <= pongCpuX + PONG_PADDLE_W + PONG_BALL_R) {
+      pongBallX >= pongCpuX - PONG_BALL_R - cpuHitMargin &&
+      pongBallX <= pongCpuX + PONG_PADDLE_W + PONG_BALL_R + cpuHitMargin) {
     pongBallY = PONG_CPU_Y + PONG_PADDLE_H + PONG_BALL_R;
     pongBallVY = fabs(pongBallVY);
     float offset = (pongBallX - (pongCpuX + PONG_PADDLE_W / 2.0)) / (PONG_PADDLE_W / 2.0);
@@ -3393,27 +3734,33 @@ void updatePongGame() {
     drawPongCourt();
 
     if (pongPlayerScore >= PONG_SCORE_LIMIT) {
-      finishPongGame(true);
+      finishPongGame(1);
+      sendPongState(true);
       return;
     }
 
     resetPongBall(-1);
+    sendPongState(true);
   } else if (pongBallY > PONG_PLAY_BOTTOM) {
     pongCpuScore++;
     drawPongCourt();
 
     if (pongCpuScore >= PONG_SCORE_LIMIT) {
-      finishPongGame(false);
+      finishPongGame(2);
+      sendPongState(true);
       return;
     }
 
     resetPongBall(1);
+    sendPongState(true);
   }
 
   drawPongEntities();
+  sendPongState();
 }
 
 void startPongLocalGame() {
+  activeNetworkGame = NETWORK_GAME_PONG;
   stopNetwork();
   localGame = true;
   appState = STATE_PONG_PLAYING;
@@ -3421,7 +3768,23 @@ void startPongLocalGame() {
   newPongMatch();
 }
 
+void startPongNetworkGame() {
+  activeNetworkGame = NETWORK_GAME_PONG;
+  localGame = false;
+  myTurn = true;
+  appState = STATE_PONG_PLAYING;
+  beepStart();
+  newPongMatch();
+
+  if (!isHost) {
+    drawCenteredText("Waiting host", 184, 2, RGB565_YELLOW);
+  } else {
+    sendPongState(true);
+  }
+}
+
 void drawPongMenuScreen() {
+  activeNetworkGame = NETWORK_GAME_PONG;
   localGame = false;
   appState = STATE_PONG;
   drawPongArcadeHome();
@@ -3444,6 +3807,299 @@ void drawPongPlaceholderScreen(const char *title) {
 
   drawButton(btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+}
+
+void drawSnakeMenuScreen() {
+  activeNetworkGame = NETWORK_GAME_SNAKE;
+  localGame = false;
+  appState = STATE_SNAKE;
+  drawSnakeArcadeHome();
+
+  drawTransparentArcadeButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH, "LOCAL", 2);
+
+  drawTransparentArcadeButton(btnHostX, btnHostY, btnHostW, btnHostH, "HOST", 2);
+
+  drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN", 2);
+
+  drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
+}
+
+void drawSnakePlaceholderScreen(const char *title) {
+  appState = STATE_SNAKE_PLACEHOLDER;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText(title, 105, 3, RGB565_GREEN);
+  drawCenteredText("coming soon", 152, 2, RGB565_YELLOW);
+
+  drawButton(btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+}
+
+void drawSnakeHud() {
+  gfx->fillRect(0, 0, screenW, 42, RGB565_BLACK);
+  gfx->drawLine(0, 42, screenW - 1, 42, RGB565_GREEN);
+
+  char line[32];
+  snprintf(line, sizeof(line), "SNAKE  SCORE:%d", snakeScore);
+  gfx->setTextSize(2);
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setCursor(10, 12);
+  gfx->print(line);
+
+  drawButton(btnSnakeMenuX, btnSnakeMenuY, btnSnakeMenuW, btnSnakeMenuH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 1);
+}
+
+void drawSnakeControls() {
+  gfx->fillRect(0, 358, screenW, screenH - 358, RGB565_BLACK);
+  gfx->drawLine(0, 358, screenW - 1, 358, RGB565_GREEN);
+
+  drawButton(btnSnakeUpX, btnSnakeUpY, btnSnakeDirW, btnSnakeDirH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "UP", 2);
+  drawButton(btnSnakeLeftX, btnSnakeLeftY, btnSnakeDirW, btnSnakeDirH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "LEFT", 1);
+  drawButton(btnSnakeDownX, btnSnakeDownY, btnSnakeDirW, btnSnakeDirH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "DOWN", 1);
+  drawButton(btnSnakeRightX, btnSnakeRightY, btnSnakeDirW, btnSnakeDirH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "RIGHT", 1);
+}
+
+void drawSnakeBoardFrame() {
+  int boardW = SNAKE_GRID_COLS * SNAKE_CELL;
+  int boardH = SNAKE_GRID_ROWS * SNAKE_CELL;
+
+  gfx->fillRect(SNAKE_BOARD_X - 2, SNAKE_BOARD_Y - 2, boardW + 4, boardH + 4, RGB565_GREEN);
+  gfx->fillRect(SNAKE_BOARD_X, SNAKE_BOARD_Y, boardW, boardH, RGB565_BLACK);
+
+  uint16_t gridColor = rgb888to565(6, 38, 20);
+
+  for (int c = 1; c < SNAKE_GRID_COLS; c++) {
+    int x = SNAKE_BOARD_X + c * SNAKE_CELL;
+    gfx->drawLine(x, SNAKE_BOARD_Y, x, SNAKE_BOARD_Y + boardH - 1, gridColor);
+  }
+
+  for (int r = 1; r < SNAKE_GRID_ROWS; r++) {
+    int y = SNAKE_BOARD_Y + r * SNAKE_CELL;
+    gfx->drawLine(SNAKE_BOARD_X, y, SNAKE_BOARD_X + boardW - 1, y, gridColor);
+  }
+}
+
+void drawSnakeCell(int col, int row, uint16_t fillColor, uint16_t borderColor) {
+  int x = SNAKE_BOARD_X + col * SNAKE_CELL + 1;
+  int y = SNAKE_BOARD_Y + row * SNAKE_CELL + 1;
+
+  gfx->fillRoundRect(x, y, SNAKE_CELL - 2, SNAKE_CELL - 2, 3, fillColor);
+  gfx->drawRoundRect(x, y, SNAKE_CELL - 2, SNAKE_CELL - 2, 3, borderColor);
+}
+
+void clearSnakeCell(int col, int row) {
+  int x = SNAKE_BOARD_X + col * SNAKE_CELL + 1;
+  int y = SNAKE_BOARD_Y + row * SNAKE_CELL + 1;
+
+  gfx->fillRect(x, y, SNAKE_CELL - 2, SNAKE_CELL - 2, RGB565_BLACK);
+}
+
+bool snakeCellOccupied(int col, int row, int limit) {
+  for (int i = 0; i < limit; i++) {
+    if (snakeX[i] == col && snakeY[i] == row) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void placeSnakeFood() {
+  for (int attempt = 0; attempt < 300; attempt++) {
+    int col = random(0, SNAKE_GRID_COLS);
+    int row = random(0, SNAKE_GRID_ROWS);
+
+    if (!snakeCellOccupied(col, row, snakeLength)) {
+      snakeFoodX = col;
+      snakeFoodY = row;
+      return;
+    }
+  }
+
+  for (int row = 0; row < SNAKE_GRID_ROWS; row++) {
+    for (int col = 0; col < SNAKE_GRID_COLS; col++) {
+      if (!snakeCellOccupied(col, row, snakeLength)) {
+        snakeFoodX = col;
+        snakeFoodY = row;
+        return;
+      }
+    }
+  }
+}
+
+void drawSnakeFood() {
+  int cx = SNAKE_BOARD_X + snakeFoodX * SNAKE_CELL + SNAKE_CELL / 2;
+  int cy = SNAKE_BOARD_Y + snakeFoodY * SNAKE_CELL + SNAKE_CELL / 2;
+
+  gfx->fillCircle(cx, cy, 5, RGB565_RED);
+  gfx->drawCircle(cx, cy, 6, RGB565_YELLOW);
+}
+
+void drawSnakeBody() {
+  for (int i = snakeLength - 1; i >= 0; i--) {
+    if (i == 0) {
+      drawSnakeCell(snakeX[i], snakeY[i], RGB565_YELLOW, RGB565_WHITE);
+    } else {
+      drawSnakeCell(snakeX[i], snakeY[i], RGB565_GREEN, RGB565_CYAN);
+    }
+  }
+}
+
+void drawSnakePlayArea() {
+  drawSnakeBoardFrame();
+  drawSnakeFood();
+  drawSnakeBody();
+}
+
+void drawSnakeGameOverOverlay() {
+  gfx->fillRoundRect(28, 168, 264, 132, 10, RGB565_BLACK);
+  gfx->drawRoundRect(28, 168, 264, 132, 10, RGB565_RED);
+  gfx->drawRoundRect(33, 173, 254, 122, 8, RGB565_YELLOW);
+
+  drawCenteredText("GAME OVER", 190, 3, RGB565_RED);
+
+  char line[32];
+  snprintf(line, sizeof(line), "SCORE: %d", snakeScore);
+  drawCenteredText(line, 238, 2, RGB565_WHITE);
+  drawCenteredText("Tap to restart", 270, 1, RGB565_CYAN);
+}
+
+void drawSnakeGameScreen() {
+  appState = STATE_SNAKE_PLAYING;
+  gfx->fillScreen(RGB565_BLACK);
+  drawSnakeHud();
+  drawSnakePlayArea();
+  drawSnakeControls();
+
+  if (snakeGameOver) {
+    drawSnakeGameOverOverlay();
+  }
+}
+
+void newSnakeGame() {
+  activeNetworkGame = NETWORK_GAME_SNAKE;
+  localGame = true;
+  snakeLength = 5;
+  snakeDir = SNAKE_DIR_RIGHT;
+  snakeNextDir = SNAKE_DIR_RIGHT;
+  snakeScore = 0;
+  snakeGameOver = false;
+
+  int startX = SNAKE_GRID_COLS / 2;
+  int startY = SNAKE_GRID_ROWS / 2;
+
+  for (int i = 0; i < snakeLength; i++) {
+    snakeX[i] = startX - i;
+    snakeY[i] = startY;
+  }
+
+  placeSnakeFood();
+  snakeLastFrame = millis();
+  drawSnakeGameScreen();
+}
+
+bool snakeDirectionsAreOpposite(int a, int b) {
+  return (a == SNAKE_DIR_UP && b == SNAKE_DIR_DOWN) ||
+         (a == SNAKE_DIR_DOWN && b == SNAKE_DIR_UP) ||
+         (a == SNAKE_DIR_LEFT && b == SNAKE_DIR_RIGHT) ||
+         (a == SNAKE_DIR_RIGHT && b == SNAKE_DIR_LEFT);
+}
+
+void setSnakeDirection(int dir) {
+  if (snakeDirectionsAreOpposite(dir, snakeDir)) return;
+  snakeNextDir = dir;
+}
+
+void finishSnakeGame() {
+  snakeGameOver = true;
+  beepDraw();
+  drawSnakeHud();
+  drawSnakeGameOverOverlay();
+}
+
+void updateSnakeGame() {
+  if (appState != STATE_SNAKE_PLAYING) return;
+  if (snakeGameOver) return;
+
+  unsigned long now = millis();
+  unsigned long frameMs = SNAKE_FRAME_MS - (unsigned long)constrain(snakeScore * 3, 0, 55);
+
+  if (now - snakeLastFrame < frameMs) return;
+  snakeLastFrame = now;
+
+  snakeDir = snakeNextDir;
+
+  int oldHeadX = snakeX[0];
+  int oldHeadY = snakeY[0];
+  int oldTailX = snakeX[snakeLength - 1];
+  int oldTailY = snakeY[snakeLength - 1];
+  int nextX = snakeX[0];
+  int nextY = snakeY[0];
+
+  if (snakeDir == SNAKE_DIR_UP) nextY--;
+  if (snakeDir == SNAKE_DIR_RIGHT) nextX++;
+  if (snakeDir == SNAKE_DIR_DOWN) nextY++;
+  if (snakeDir == SNAKE_DIR_LEFT) nextX--;
+
+  bool willGrow = (nextX == snakeFoodX && nextY == snakeFoodY);
+  int bodyCheckLimit = willGrow ? snakeLength : snakeLength - 1;
+
+  if (nextX < 0 || nextX >= SNAKE_GRID_COLS ||
+      nextY < 0 || nextY >= SNAKE_GRID_ROWS ||
+      snakeCellOccupied(nextX, nextY, bodyCheckLimit)) {
+    finishSnakeGame();
+    return;
+  }
+
+  if (willGrow && snakeLength < SNAKE_MAX_LEN) {
+    snakeLength++;
+    snakeScore++;
+    beepMove();
+  }
+
+  for (int i = snakeLength - 1; i > 0; i--) {
+    snakeX[i] = snakeX[i - 1];
+    snakeY[i] = snakeY[i - 1];
+  }
+
+  snakeX[0] = nextX;
+  snakeY[0] = nextY;
+
+  if (willGrow) {
+    if (snakeLength >= SNAKE_MAX_LEN) {
+      finishSnakeGame();
+      return;
+    }
+
+    placeSnakeFood();
+    drawSnakeHud();
+  } else {
+    clearSnakeCell(oldTailX, oldTailY);
+  }
+
+  drawSnakeCell(oldHeadX, oldHeadY, RGB565_GREEN, RGB565_CYAN);
+  drawSnakeFood();
+  drawSnakeCell(snakeX[0], snakeY[0], RGB565_YELLOW, RGB565_WHITE);
+}
+
+void startSnakeLocalGame() {
+  activeNetworkGame = NETWORK_GAME_SNAKE;
+  stopNetwork();
+  localGame = true;
+  beepStart();
+  newSnakeGame();
+}
+
+void startSnakeNetworkGame() {
+  activeNetworkGame = NETWORK_GAME_SNAKE;
+  localGame = false;
+  beepStart();
+  drawSnakePlaceholderScreen(isHost ? "SNAKE HOST" : "SNAKE JOIN");
 }
 
 void drawPocketTanksMenuScreen() {
@@ -3514,10 +4170,16 @@ void drawWaitingHostScreen() {
   bool rpsNetworkGame = (activeNetworkGame == NETWORK_GAME_RPS);
   bool tanksNetworkGame = (activeNetworkGame == NETWORK_GAME_PT);
   bool breakoutNetworkGame = (activeNetworkGame == NETWORK_GAME_BREAKOUT);
+  bool pongNetworkGame = (activeNetworkGame == NETWORK_GAME_PONG);
+  bool snakeNetworkGame = (activeNetworkGame == NETWORK_GAME_SNAKE);
 
   gfx->fillScreen(RGB565_BLACK);
 
-  if (breakoutNetworkGame) {
+  if (pongNetworkGame) {
+    drawCenteredText("PONG HOST", 28, 3, RGB565_GREEN);
+  } else if (snakeNetworkGame) {
+    drawCenteredText("SNAKE HOST", 28, 3, RGB565_GREEN);
+  } else if (breakoutNetworkGame) {
     drawCenteredText("BREAKOUT HOST", 28, 2, RGB565_GREEN);
   } else if (tanksNetworkGame) {
     drawCenteredText("TANKS HOST", 28, 3, RGB565_GREEN);
@@ -3525,7 +4187,7 @@ void drawWaitingHostScreen() {
     drawCenteredText(rpsNetworkGame ? "RPS HOST" : "HOST ACTIV", 28, 3, RGB565_GREEN);
   }
 
-  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame) ? "Tu esti P1" : "Tu esti X", 72, 2, RGB565_WHITE);
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame) ? "Tu esti P1" : "Tu esti X", 72, 2, RGB565_WHITE);
 
   drawCenteredText("Asteapta oponentul", 118, 2, RGB565_YELLOW);
   drawCenteredText("sa intre cu JOIN", 145, 2, RGB565_YELLOW);
@@ -3547,10 +4209,16 @@ void drawConnectingJoinScreen() {
   bool rpsNetworkGame = (activeNetworkGame == NETWORK_GAME_RPS);
   bool tanksNetworkGame = (activeNetworkGame == NETWORK_GAME_PT);
   bool breakoutNetworkGame = (activeNetworkGame == NETWORK_GAME_BREAKOUT);
+  bool pongNetworkGame = (activeNetworkGame == NETWORK_GAME_PONG);
+  bool snakeNetworkGame = (activeNetworkGame == NETWORK_GAME_SNAKE);
 
   gfx->fillScreen(RGB565_BLACK);
 
-  if (breakoutNetworkGame) {
+  if (pongNetworkGame) {
+    drawCenteredText("PONG JOIN", 70, 3, RGB565_BLUE);
+  } else if (snakeNetworkGame) {
+    drawCenteredText("SNAKE JOIN", 70, 3, RGB565_BLUE);
+  } else if (breakoutNetworkGame) {
     drawCenteredText("BREAKOUT JOIN", 70, 2, RGB565_BLUE);
   } else if (tanksNetworkGame) {
     drawCenteredText("TANKS JOIN", 70, 3, RGB565_BLUE);
@@ -3558,7 +4226,7 @@ void drawConnectingJoinScreen() {
     drawCenteredText(rpsNetworkGame ? "RPS JOIN" : "JOIN", 70, 3, RGB565_BLUE);
   }
 
-  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame) ? "Tu esti P2" : "Tu esti O", 120, 2, RGB565_WHITE);
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame) ? "Tu esti P2" : "Tu esti O", 120, 2, RGB565_WHITE);
 
   drawCenteredText("Connecting...", 190, 2, RGB565_YELLOW);
 
@@ -3759,6 +4427,8 @@ void drawHostIpScreen() {
 void startRpsNetworkGame();
 void startPocketTanksNetworkGame();
 void startBreakoutNetworkGame();
+void startPongNetworkGame();
+void startSnakeNetworkGame();
 
 // ============================================================================
 // NETWORK
@@ -3768,6 +4438,8 @@ const char *getNetworkGameCode() {
   if (activeNetworkGame == NETWORK_GAME_RPS) return "RPS";
   if (activeNetworkGame == NETWORK_GAME_PT) return "PT";
   if (activeNetworkGame == NETWORK_GAME_BREAKOUT) return "BRK";
+  if (activeNetworkGame == NETWORK_GAME_PONG) return "PONG";
+  if (activeNetworkGame == NETWORK_GAME_SNAKE) return "SNK";
   return "TTT";
 }
 
@@ -3793,6 +4465,10 @@ void applyNetworkGameCode(const String &code) {
     }
   } else if (gameCode == "BRK") {
     activeNetworkGame = NETWORK_GAME_BREAKOUT;
+  } else if (gameCode == "PONG") {
+    activeNetworkGame = NETWORK_GAME_PONG;
+  } else if (gameCode == "SNK") {
+    activeNetworkGame = NETWORK_GAME_SNAKE;
   } else if (gameCode == "TTT") {
     activeNetworkGame = NETWORK_GAME_TTT;
   }
@@ -3928,7 +4604,9 @@ void beginHostNetwork() {
   myPlayer = (activeNetworkGame == NETWORK_GAME_TTT) ? 'X' : '1';
   myTurn = (activeNetworkGame == NETWORK_GAME_TTT ||
             activeNetworkGame == NETWORK_GAME_PT ||
-            activeNetworkGame == NETWORK_GAME_BREAKOUT);
+            activeNetworkGame == NETWORK_GAME_BREAKOUT ||
+            activeNetworkGame == NETWORK_GAME_PONG ||
+            activeNetworkGame == NETWORK_GAME_SNAKE);
 
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(HOST_IP, HOST_IP, IPAddress(255, 255, 255, 0));
@@ -4000,6 +4678,16 @@ void startNetworkGame() {
 
   if (activeNetworkGame == NETWORK_GAME_BREAKOUT) {
     startBreakoutNetworkGame();
+    return;
+  }
+
+  if (activeNetworkGame == NETWORK_GAME_PONG) {
+    startPongNetworkGame();
+    return;
+  }
+
+  if (activeNetworkGame == NETWORK_GAME_SNAKE) {
+    startSnakeNetworkGame();
     return;
   }
 
@@ -4525,6 +5213,10 @@ void returnToMenu(bool notifyPeer) {
     drawPocketTanksMenuScreen();
   } else if (activeNetworkGame == NETWORK_GAME_BREAKOUT) {
     drawBreakoutMenuScreen();
+  } else if (activeNetworkGame == NETWORK_GAME_PONG) {
+    drawPongMenuScreen();
+  } else if (activeNetworkGame == NETWORK_GAME_SNAKE) {
+    drawSnakeMenuScreen();
   } else {
     appState = STATE_MENU;
     drawMenuScreen();
@@ -4547,7 +5239,7 @@ void returnToHome(bool notifyPeer) {
 // ============================================================================
 // Text protocol over TCP. Messages are line-based and intentionally simple:
 // START:<game>, NEW:<game>, MOVE:col,row, RPS_CHOICE:n, PT_* messages,
-// BR_LOSE, LEAVE.
+// PN_* messages, BR_LOSE, LEAVE. Snake currently uses only START/NEW/LEAVE.
 void handleNetMessage(String msg) {
   msg.trim();
 
@@ -4588,6 +5280,18 @@ void handleNetMessage(String msg) {
   if (msg == "BR_LOSE") {
     activeNetworkGame = NETWORK_GAME_BREAKOUT;
     applyRemoteBreakoutLoss();
+    return;
+  }
+
+  if (msg.startsWith("PN_PAD:")) {
+    activeNetworkGame = NETWORK_GAME_PONG;
+    applyRemotePongPaddle(msg.substring(7).toInt());
+    return;
+  }
+
+  if (msg.startsWith("PN_STATE:")) {
+    activeNetworkGame = NETWORK_GAME_PONG;
+    applyRemotePongState(msg.substring(9));
     return;
   }
 
@@ -4654,7 +5358,9 @@ void pollNetwork() {
         appState == STATE_RPS_CHOICE_P1 || appState == STATE_RPS_CHOICE_P2 ||
         appState == STATE_RPS_WAITING_CHOICE || appState == STATE_RPS_RESULT ||
         appState == STATE_PT_PLAYING || appState == STATE_PT_RESULT ||
-        appState == STATE_BREAKOUT_PLAYING) {
+        appState == STATE_BREAKOUT_PLAYING ||
+        appState == STATE_PONG_PLAYING ||
+        appState == STATE_SNAKE_PLACEHOLDER) {
       gfx->fillScreen(RGB565_BLACK);
       drawCenteredText("Conexiune pierduta", 180, 2, RGB565_RED);
       delay(1200);
@@ -4767,6 +5473,12 @@ void handleGamesTouch(int x, int y) {
 }
 
 void handleGamesMoreTouch(int x, int y) {
+  if (inRect(x, y, btnGamesX, btnGamesSnakeY, btnGamesW, btnGamesH)) {
+    beepClick();
+    drawSnakeMenuScreen();
+    return;
+  }
+
   if (inRect(x, y, btnGamesX, btnGamesBreakoutY, btnGamesW, btnGamesH)) {
     beepClick();
     drawBreakoutMenuScreen();
@@ -4906,14 +5618,16 @@ void handlePongMenuTouch(int x, int y) {
   }
 
   if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
-    beepClick();
-    drawPongPlaceholderScreen("PONG HOST");
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_PONG;
+    startHostMode();
     return;
   }
 
   if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
-    beepClick();
-    drawPongPlaceholderScreen("PONG JOIN");
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_PONG;
+    startJoinMode();
     return;
   }
 
@@ -4932,15 +5646,119 @@ void handlePongPlaceholderTouch(int x, int y) {
   }
 }
 
+void handleSnakeMenuTouch(int x, int y) {
+  if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
+    startSnakeLocalGame();
+    return;
+  }
+
+  if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_SNAKE;
+    startHostMode();
+    return;
+  }
+
+  if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_SNAKE;
+    startJoinMode();
+    return;
+  }
+
+  if (inRect(x, y, btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH)) {
+    beepClick();
+    drawGamesMoreScreen();
+    return;
+  }
+}
+
+void handleSnakePlaceholderTouch(int x, int y) {
+  if (inRect(x, y, btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH)) {
+    beepClick();
+
+    if (localGame) {
+      drawSnakeMenuScreen();
+    } else {
+      returnToMenu(true);
+    }
+
+    return;
+  }
+}
+
+void handleSnakePlayingTouch(int x, int y) {
+  if (inRect(x, y, btnSnakeMenuX, btnSnakeMenuY, btnSnakeMenuW, btnSnakeMenuH)) {
+    beepClick();
+    drawSnakeMenuScreen();
+    return;
+  }
+
+  if (snakeGameOver) {
+    beepStart();
+    newSnakeGame();
+    return;
+  }
+
+  if (inRect(x, y, btnSnakeUpX, btnSnakeUpY, btnSnakeDirW, btnSnakeDirH)) {
+    beepClick();
+    setSnakeDirection(SNAKE_DIR_UP);
+    return;
+  }
+
+  if (inRect(x, y, btnSnakeLeftX, btnSnakeLeftY, btnSnakeDirW, btnSnakeDirH)) {
+    beepClick();
+    setSnakeDirection(SNAKE_DIR_LEFT);
+    return;
+  }
+
+  if (inRect(x, y, btnSnakeDownX, btnSnakeDownY, btnSnakeDirW, btnSnakeDirH)) {
+    beepClick();
+    setSnakeDirection(SNAKE_DIR_DOWN);
+    return;
+  }
+
+  if (inRect(x, y, btnSnakeRightX, btnSnakeRightY, btnSnakeDirW, btnSnakeDirH)) {
+    beepClick();
+    setSnakeDirection(SNAKE_DIR_RIGHT);
+    return;
+  }
+
+  if (inRect(x, y, SNAKE_BOARD_X, SNAKE_BOARD_Y,
+             SNAKE_GRID_COLS * SNAKE_CELL, SNAKE_GRID_ROWS * SNAKE_CELL)) {
+    int headCenterX = SNAKE_BOARD_X + snakeX[0] * SNAKE_CELL + SNAKE_CELL / 2;
+    int headCenterY = SNAKE_BOARD_Y + snakeY[0] * SNAKE_CELL + SNAKE_CELL / 2;
+    int dx = x - headCenterX;
+    int dy = y - headCenterY;
+
+    if (abs(dx) > abs(dy)) {
+      setSnakeDirection(dx > 0 ? SNAKE_DIR_RIGHT : SNAKE_DIR_LEFT);
+    } else {
+      setSnakeDirection(dy > 0 ? SNAKE_DIR_DOWN : SNAKE_DIR_UP);
+    }
+
+    return;
+  }
+}
+
 void handlePongPlayingTouch(int x, int y) {
   if (inRect(x, y, btnPongMenuX, btnPongMenuY, btnPongMenuW, btnPongMenuH)) {
     beepClick();
-    drawPongMenuScreen();
+    if (localGame) {
+      drawPongMenuScreen();
+    } else {
+      returnToMenu(true);
+    }
     return;
   }
 
   if (pongGameOver) {
-    newPongMatch();
+    if (localGame) {
+      newPongMatch();
+    } else {
+      sendNetMessage(buildNetworkMessage("NEW"));
+      startNetworkGame();
+    }
     return;
   }
 }
@@ -5480,6 +6298,12 @@ void handleTouch(int x, int y) {
     handlePongPlayingTouch(x, y);
   } else if (appState == STATE_PONG_PLACEHOLDER) {
     handlePongPlaceholderTouch(x, y);
+  } else if (appState == STATE_SNAKE) {
+    handleSnakeMenuTouch(x, y);
+  } else if (appState == STATE_SNAKE_PLAYING) {
+    handleSnakePlayingTouch(x, y);
+  } else if (appState == STATE_SNAKE_PLACEHOLDER) {
+    handleSnakePlaceholderTouch(x, y);
   } else if (appState == STATE_EMPTY_GAME) {
     handleEmptyGameTouch(x, y);
   } else if (appState == STATE_MENU) {
@@ -5616,6 +6440,7 @@ void loop() {
 
   updateBreakoutGame();
   updatePongGame();
+  updateSnakeGame();
 
   delay(10);
 }
