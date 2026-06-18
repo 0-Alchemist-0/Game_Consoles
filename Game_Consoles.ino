@@ -1,6 +1,16 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 7.4 - 2026-06-18 10:41 - Added host-authoritative Ranch Rush network
+// gameplay with two visible differently colored players and synced ranch state.
+// Version 7.3 - 2026-06-18 10:26 - Fixed Ranch Rush lasso persistence by using
+// a gameplay cowboy sprite without the decorative menu lasso loop.
+// Version 7.2 - 2026-06-18 10:15 - Implemented local Ranch Rush gameplay with
+// lane movement, lasso catching, animal spawning, lives, levels, high score,
+// dirty-rect rendering, restart, and menu return.
+// Version 7.1 - 2026-06-18 10:07 - Added Ranch Rush to the Games menu with a
+// ranch-themed mode menu, Local/Host/Join/Back navigation, and shared network
+// setup placeholders.
 // Version 7.0 - 2026-06-18 09:27 - Added network Snake gameplay with
 // host-authoritative two-player movement, synced state packets, shared food,
 // different snake colors, and remote direction control.
@@ -172,8 +182,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 7.0";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V70-2026061809";
+const char *APP_VERSION_TEXT = "Version 7.4";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V74-2026061810";
 
 
 
@@ -277,6 +287,9 @@ enum AppState {
   STATE_SNAKE,
   STATE_SNAKE_PLAYING,
   STATE_SNAKE_PLACEHOLDER,
+  STATE_RANCH_RUSH,
+  STATE_RR_PLAYING,
+  STATE_RR_PLACEHOLDER,
   STATE_EMPTY_GAME,
   STATE_MENU,
   STATE_SETTINGS,
@@ -301,7 +314,8 @@ enum NetworkGameType {
   NETWORK_GAME_PT,
   NETWORK_GAME_BREAKOUT,
   NETWORK_GAME_PONG,
-  NETWORK_GAME_SNAKE
+  NETWORK_GAME_SNAKE,
+  NETWORK_GAME_RANCH_RUSH
 };
 
 NetworkGameType activeNetworkGame = NETWORK_GAME_TTT;
@@ -539,6 +553,75 @@ uint8_t snakeDrawHead[SNAKE_MAX_LEN];
 int snakeDrawFoodCell = -1;
 bool snakeDrawReady = false;
 
+// Ranch Rush local gameplay is a lane-based lasso game ported from the
+// standalone sketch into this multi-game console shell.
+static const int RR_LANES = 5;
+static const int RR_MAX_ANIMALS = 10;
+static const int RR_FRAME_MS = 33;
+static const unsigned long RR_NET_STATE_MS = 33;
+static const int RR_HUD_H = 50;
+static const int RR_FIELD_TOP = 60;
+static const int RR_FIELD_BOT = 400;
+static const int RR_BTN_AREA_TOP = 410;
+static const int RR_LANE_SPACING = 60;
+static const int RR_LANE_START_Y = RR_FIELD_TOP + 35;
+
+const int btnRrMenuX = 250;
+const int btnRrMenuY = 7;
+const int btnRrMenuW = 62;
+const int btnRrMenuH = 30;
+
+struct RanchAnimal {
+  float x;
+  int lane;
+  float speed;
+  bool active;
+  uint8_t type;
+};
+
+struct RanchPrevAnimal {
+  int x;
+  int y;
+  bool wasActive;
+};
+
+int rrLaneY[RR_LANES];
+RanchAnimal rrAnimals[RR_MAX_ANIMALS];
+RanchPrevAnimal rrPrevAnimals[RR_MAX_ANIMALS];
+int rrPlayerLane = 2;
+int rrPrevPlayerLane = -1;
+int rrPlayerX = 45;
+int rrScore = 0;
+uint32_t rrHiScore = 0;
+int rrLives = 3;
+int rrLevel = 1;
+bool rrLassoActive = false;
+float rrLassoX = 0.0f;
+int rrLassoLane = 0;
+unsigned long rrLassoStart = 0;
+float rrPrevLassoX = 0.0f;
+int rrPrevLassoLane = -1;
+bool rrPrevLassoActive = false;
+unsigned long rrLastSpawn = 0;
+unsigned long rrLastFrame = 0;
+bool rrGameOver = false;
+const int rrNetPlayerX[2] = {45, 96};
+int rrNetPlayerLane[2] = {2, 2};
+int rrNetPrevPlayerLane[2] = {-1, -1};
+int rrNetScore[2] = {0, 0};
+int rrNetLives[2] = {3, 3};
+bool rrNetLassoActive[2] = {false, false};
+float rrNetLassoX[2] = {0.0f, 0.0f};
+int rrNetLassoLane[2] = {0, 0};
+unsigned long rrNetLassoStart[2] = {0, 0};
+float rrNetPrevLassoX[2] = {0.0f, 0.0f};
+int rrNetPrevLassoLane[2] = {-1, -1};
+bool rrNetPrevLassoActive[2] = {false, false};
+bool rrNetGameOver = false;
+int rrNetWinner = 0;
+bool rrRanchSceneReady = false;
+unsigned long rrLastStateSendTime = 0;
+
 // Touch edge detection and debounce. Touch actions fire once per press, not on
 // every loop while the finger is still down.
 bool touchWasDown = false;
@@ -614,6 +697,7 @@ const int btnGamesNavW = 115;
 const int btnGamesSnakeY = 135;
 const int btnGamesBreakoutY = 205;
 const int btnGamesPongY = 275;
+const int btnGamesRanchRushY = 335;
 
 const int btnEmptyBackX = 90;
 const int btnEmptyBackY = 420;
@@ -1019,6 +1103,18 @@ void resetPocketTanksScore() {
   ptScoreP1 = 0;
   ptScoreP2 = 0;
   savePocketTanksScore();
+}
+
+void loadRanchRushScore() {
+  prefs.begin("ranch", true);
+  rrHiScore = prefs.getULong("hiscore_ranch", 0);
+  prefs.end();
+}
+
+void saveRanchRushScore() {
+  prefs.begin("ranch", false);
+  prefs.putULong("hiscore_ranch", rrHiScore);
+  prefs.end();
 }
 
 // ============================================================================
@@ -2009,6 +2105,121 @@ void drawSnakeArcadeHome() {
   drawSnakeTitleSign();
 }
 
+void drawRanchRushFence(int y) {
+  uint16_t fence = rgb888to565(214, 186, 170);
+
+  gfx->fillRect(0, y, screenW, 5, fence);
+  gfx->fillRect(0, y + 16, screenW, 5, fence);
+
+  for (int x = 10; x < screenW; x += 40) {
+    gfx->fillRect(x, y - 3, 5, 27, fence);
+  }
+}
+
+void drawRanchRushTitleSign() {
+  uint16_t signFill = rgb888to565(40, 30, 10);
+  uint16_t ranchBrown = rgb888to565(138, 65, 17);
+  uint16_t ranchOrange = rgb888to565(255, 160, 0);
+  uint16_t ranchGreen = rgb888to565(92, 196, 100);
+
+  gfx->fillRoundRect(18, 18, 284, 92, 10, signFill);
+  gfx->drawRoundRect(18, 18, 284, 92, 10, ranchBrown);
+  gfx->drawRoundRect(22, 22, 276, 84, 8, ranchOrange);
+  gfx->drawRoundRect(26, 26, 268, 76, 7, ranchGreen);
+
+  for (int x = 38; x < 286; x += 20) {
+    gfx->fillCircle(x, 30, 3, ranchOrange);
+    gfx->drawCircle(x, 30, 4, RGB565_YELLOW);
+    gfx->fillCircle(x, 98, 3, ranchBrown);
+    gfx->drawCircle(x, 98, 4, ranchOrange);
+  }
+
+  drawPixelText("RANCH", 50, 38, 4, RGB565_YELLOW, ranchBrown);
+  drawPixelText("RUSH", 87, 72, 4, RGB565_WHITE, ranchOrange);
+}
+
+void drawRanchRushCowboyDecor(int x, int y) {
+  uint16_t ranchBrown = rgb888to565(138, 65, 17);
+  uint16_t horse = RGB565_YELLOW;
+  uint16_t shirt = rgb888to565(60, 100, 255);
+  uint16_t skin = rgb888to565(255, 160, 0);
+
+  gfx->fillRect(x - 18, y + 8, 34, 14, horse);
+  gfx->fillCircle(x + 14, y + 12, 7, horse);
+  gfx->fillRect(x - 12, y + 21, 3, 10, horse);
+  gfx->fillRect(x - 2, y + 21, 3, 10, horse);
+  gfx->fillRect(x + 8, y + 21, 3, 10, horse);
+  gfx->drawLine(x - 18, y + 11, x - 28, y + 4, horse);
+  gfx->drawLine(x - 19, y + 13, x - 30, y + 10, horse);
+
+  gfx->fillCircle(x - 3, y - 1, 5, skin);
+  gfx->fillRect(x - 8, y + 4, 11, 12, shirt);
+  gfx->fillRect(x - 13, y - 9, 20, 3, ranchBrown);
+  gfx->fillRect(x - 8, y - 15, 10, 7, ranchBrown);
+  gfx->drawLine(x + 3, y + 7, x + 54, y - 4, RGB565_WHITE);
+  gfx->drawCircle(x + 58, y - 5, 12, RGB565_WHITE);
+}
+
+void drawRanchRushAnimalDecor(int x, int y) {
+  uint16_t ranchBrown = rgb888to565(138, 65, 17);
+
+  gfx->fillRect(x - 12, y + 8, 28, 13, ranchBrown);
+  gfx->fillCircle(x + 16, y + 12, 6, ranchBrown);
+  gfx->fillCircle(x + 22, y + 8, 5, ranchBrown);
+  gfx->fillRect(x - 6, y + 20, 3, 10, ranchBrown);
+  gfx->fillRect(x + 4, y + 20, 3, 10, ranchBrown);
+  gfx->fillRect(x + 12, y + 20, 3, 10, ranchBrown);
+  gfx->drawLine(x + 20, y + 4, x + 15, y - 3, RGB565_WHITE);
+  gfx->drawLine(x + 24, y + 4, x + 30, y - 3, RGB565_WHITE);
+  gfx->drawLine(x - 12, y + 11, x - 22, y + 5, ranchBrown);
+  gfx->fillRect(x - 4, y + 10, 4, 4, RGB565_BLACK);
+  gfx->fillRect(x + 8, y + 12, 3, 3, RGB565_BLACK);
+}
+
+void drawRanchRushFieldDecor() {
+  uint16_t sky = rgb888to565(100, 180, 255);
+  uint16_t field = rgb888to565(75, 145, 35);
+  uint16_t darkField = rgb888to565(51, 100, 0);
+  uint16_t green2 = rgb888to565(92, 196, 100);
+  uint16_t dirt = rgb888to565(160, 120, 60);
+
+  gfx->fillRect(0, 112, screenW, 68, sky);
+  gfx->fillRect(0, 180, screenW, 190, field);
+  gfx->fillRect(0, 330, screenW, 40, dirt);
+  drawRanchRushFence(132);
+  drawRanchRushFence(338);
+
+  for (int i = 0; i < 5; i++) {
+    int y = 190 + i * 33;
+    gfx->drawLine(0, y, screenW - 1, y, green2);
+  }
+
+  for (int i = 0; i < 36; i++) {
+    int x = (i * 47 + 9) % screenW;
+    int y = 188 + ((i * 31 + 17) % 138);
+    gfx->drawPixel(x, y, darkField);
+    gfx->drawPixel(x + 1, y + 1, green2);
+  }
+
+  drawRanchRushCowboyDecor(72, 248);
+  drawRanchRushAnimalDecor(230, 230);
+  drawRanchRushAnimalDecor(256, 286);
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565_YELLOW);
+  gfx->setCursor(69, 350);
+  gfx->print("LANES  LASSO  CATTLE");
+}
+
+void drawRanchRushArcadeHome() {
+  fillArcadeGradient();
+  drawArcadeStars();
+  drawArcadeCabinets();
+  drawArcadeFloor();
+  drawRanchRushFieldDecor();
+  drawRanchRushTitleSign();
+}
+
 void drawTransparentArcadeButton(int x, int y, int w, int h, const char *label, int textSize) {
   uint16_t mainTextColor = RGB565_YELLOW;
   uint16_t secondTextColor = RGB565_RED;
@@ -2902,6 +3113,8 @@ void drawGamesMoreScreen() {
   drawTransparentArcadeButton(btnGamesX, btnGamesBreakoutY, btnGamesW, btnGamesH, "BREAKOUT", 2);
 
   drawTransparentArcadeButton(btnGamesX, btnGamesPongY, btnGamesW, btnGamesH, "PONG", 2);
+
+  drawTransparentArcadeButton(btnGamesX, btnGamesRanchRushY, btnGamesW, btnGamesH, "RANCH RUSH", 2);
 
   drawTransparentArcadeButton(btnGamesNavLeftX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "BACK", 2);
 
@@ -4567,6 +4780,1079 @@ void startSnakeNetworkGame() {
   drawCenteredText("Waiting host", 184, 2, RGB565_YELLOW);
 }
 
+void drawRanchRushMenuScreen() {
+  activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
+  localGame = false;
+  appState = STATE_RANCH_RUSH;
+  drawRanchRushArcadeHome();
+
+  drawTransparentArcadeButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH, "LOCAL", 2);
+
+  drawTransparentArcadeButton(btnHostX, btnHostY, btnHostW, btnHostH, "HOST", 2);
+
+  drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN", 2);
+
+  drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
+}
+
+void drawRanchRushPlaceholderScreen(const char *title) {
+  appState = STATE_RR_PLACEHOLDER;
+  gfx->fillScreen(RGB565_BLACK);
+  drawRanchRushFieldDecor();
+
+  gfx->fillRoundRect(28, 92, 264, 170, 10, rgb888to565(40, 30, 10));
+  gfx->drawRoundRect(28, 92, 264, 170, 10, rgb888to565(255, 160, 0));
+  gfx->drawRoundRect(34, 98, 252, 158, 8, RGB565_YELLOW);
+
+  drawCenteredText(title, 128, 2, RGB565_YELLOW);
+  drawCenteredText("coming soon", 172, 2, RGB565_WHITE);
+  drawCenteredText("Lasso cattle mode", 204, 1, RGB565_CYAN);
+
+  drawButton(btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+}
+
+void drawRanchRushLaneLines() {
+  uint16_t green2 = rgb888to565(92, 196, 100);
+
+  for (int i = 0; i < RR_LANES; i++) {
+    gfx->drawLine(0, rrLaneY[i] + 40, screenW - 1, rrLaneY[i] + 40, green2);
+  }
+}
+
+void drawRanchRushField() {
+  uint16_t field = rgb888to565(75, 145, 35);
+  uint16_t darkField = rgb888to565(51, 100, 0);
+  uint16_t green2 = rgb888to565(92, 196, 100);
+
+  gfx->fillRect(0, RR_FIELD_TOP, screenW, RR_FIELD_BOT - RR_FIELD_TOP, field);
+  drawRanchRushFence(RR_FIELD_TOP);
+  drawRanchRushFence(RR_FIELD_BOT - 22);
+  drawRanchRushLaneLines();
+
+  for (int i = 0; i < 30; i++) {
+    int gx = random(0, screenW);
+    int gy = random(RR_FIELD_TOP + 25, RR_FIELD_BOT - 25);
+    gfx->drawPixel(gx, gy, darkField);
+    gfx->drawPixel(gx + 1, gy + 1, green2);
+  }
+}
+
+void drawRanchRushHud() {
+  uint16_t hudBg = rgb888to565(40, 30, 10);
+  uint16_t border = rgb888to565(120, 80, 20);
+
+  gfx->fillRect(0, 0, screenW, RR_HUD_H, hudBg);
+  gfx->drawLine(0, RR_HUD_H, screenW - 1, RR_HUD_H, border);
+
+  gfx->setTextColor(RGB565_YELLOW);
+  gfx->setTextSize(2);
+  gfx->setCursor(10, 6);
+  gfx->print("RANCH RUSH");
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565_WHITE);
+
+  if (localGame) {
+    gfx->setCursor(8, 30);
+    gfx->print("Score:");
+    gfx->setCursor(104, 30);
+    gfx->print("Lives:");
+    gfx->setCursor(176, 30);
+    gfx->print("Lv:");
+    gfx->setCursor(224, 30);
+    gfx->print("Hi:");
+  } else {
+    gfx->setCursor(8, 30);
+    gfx->print("P1:");
+    gfx->setCursor(100, 30);
+    gfx->print("P2:");
+    gfx->setCursor(192, 30);
+    gfx->print("Lv:");
+    gfx->setCursor(224, 30);
+    gfx->print(myPlayer == '2' ? "Me2" : "Me1");
+  }
+
+  drawButton(btnRrMenuX, btnRrMenuY, btnRrMenuW, btnRrMenuH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 1);
+}
+
+void drawRanchRushHudValues() {
+  uint16_t hudBg = rgb888to565(40, 30, 10);
+
+  gfx->setTextSize(1);
+
+  if (localGame) {
+    gfx->fillRect(50, 28, 48, 12, hudBg);
+    gfx->setTextColor(RGB565_GREEN);
+    gfx->setCursor(50, 30);
+    gfx->print(rrScore);
+
+    gfx->fillRect(144, 28, 28, 12, hudBg);
+    gfx->setTextColor(rrLives <= 1 ? RGB565_RED : RGB565_GREEN);
+    gfx->setCursor(144, 30);
+    gfx->print(rrLives);
+
+    gfx->fillRect(194, 28, 22, 12, hudBg);
+    gfx->setTextColor(rgb888to565(255, 160, 0));
+    gfx->setCursor(194, 30);
+    gfx->print(rrLevel);
+
+    gfx->fillRect(242, 28, 40, 12, hudBg);
+    gfx->setTextColor(RGB565_YELLOW);
+    gfx->setCursor(242, 30);
+    gfx->print(rrHiScore);
+    return;
+  }
+
+  gfx->fillRect(30, 28, 64, 12, hudBg);
+  gfx->setTextColor(RGB565_GREEN);
+  gfx->setCursor(30, 30);
+  gfx->print(rrNetScore[0]);
+  gfx->print("/");
+  gfx->print(rrNetLives[0]);
+
+  gfx->fillRect(122, 28, 64, 12, hudBg);
+  gfx->setTextColor(RGB565_CYAN);
+  gfx->setCursor(122, 30);
+  gfx->print(rrNetScore[1]);
+  gfx->print("/");
+  gfx->print(rrNetLives[1]);
+
+  gfx->fillRect(210, 28, 14, 12, hudBg);
+  gfx->setTextColor(rgb888to565(255, 160, 0));
+  gfx->setCursor(210, 30);
+  gfx->print(rrLevel);
+}
+
+void drawRanchRushControls() {
+  uint16_t hudBg = rgb888to565(40, 30, 10);
+  uint16_t border = rgb888to565(120, 80, 20);
+
+  gfx->fillRect(0, RR_BTN_AREA_TOP, screenW, screenH - RR_BTN_AREA_TOP, hudBg);
+  gfx->drawLine(0, RR_BTN_AREA_TOP, screenW - 1, RR_BTN_AREA_TOP, border);
+
+  drawButton(15, RR_BTN_AREA_TOP + 10, 90, 50,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "UP", 2);
+  drawButton(115, RR_BTN_AREA_TOP + 10, 90, 50,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "DWN", 2);
+  drawButton(215, RR_BTN_AREA_TOP + 10, 90, 50,
+             RGB565_RED, RGB565_WHITE, RGB565_WHITE, "LASO", 2);
+}
+
+void clearRanchRushSprite(int x, int y, int w, int h) {
+  gfx->fillRect(x, y, w, h, rgb888to565(75, 145, 35));
+}
+
+uint16_t ranchRushPlayerHorseColor(int playerIndex) {
+  return (playerIndex == 1) ? RGB565_CYAN : RGB565_YELLOW;
+}
+
+uint16_t ranchRushPlayerShirtColor(int playerIndex) {
+  return (playerIndex == 1) ? RGB565_RED : rgb888to565(60, 100, 255);
+}
+
+uint16_t ranchRushPlayerLassoColor(int playerIndex) {
+  return (playerIndex == 1) ? RGB565_YELLOW : RGB565_WHITE;
+}
+
+void drawRanchRushPlayerAt(int x, int lane, int playerIndex) {
+  int y = rrLaneY[lane];
+  uint16_t ranchBrown = rgb888to565(138, 65, 17);
+  uint16_t horse = ranchRushPlayerHorseColor(playerIndex);
+  uint16_t shirt = ranchRushPlayerShirtColor(playerIndex);
+  uint16_t skin = rgb888to565(255, 160, 0);
+
+  gfx->fillRect(x - 18, y + 8, 34, 14, horse);
+  gfx->fillCircle(x + 14, y + 12, 7, horse);
+
+  gfx->fillRect(x - 12, y + 21, 3, 10, horse);
+  gfx->fillRect(x - 2, y + 21, 3, 10, horse);
+  gfx->fillRect(x + 8, y + 21, 3, 10, horse);
+
+  gfx->drawLine(x - 18, y + 11, x - 28, y + 4, horse);
+  gfx->drawLine(x - 19, y + 13, x - 30, y + 10, horse);
+
+  gfx->fillCircle(x - 3, y - 1, 5, skin);
+  gfx->fillRect(x - 8, y + 4, 11, 12, shirt);
+
+  gfx->fillRect(x - 13, y - 9, 20, 3, ranchBrown);
+  gfx->fillRect(x - 8, y - 15, 10, 7, ranchBrown);
+
+  gfx->drawLine(x + 3, y + 7, x + 20, y + 2, RGB565_WHITE);
+}
+
+void drawRanchRushPlayer(int lane) {
+  drawRanchRushPlayerAt(rrPlayerX, lane, 0);
+}
+
+void drawRanchRushNetworkPlayer(int playerIndex) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+  drawRanchRushPlayerAt(rrNetPlayerX[playerIndex], rrNetPlayerLane[playerIndex], playerIndex);
+}
+
+void clearRanchRushPlayerAt(int x, int lane) {
+  int y = rrLaneY[lane];
+  clearRanchRushSprite(x - 32, y - 17, 66, 52);
+}
+
+void clearRanchRushPlayer(int lane) {
+  clearRanchRushPlayerAt(rrPlayerX, lane);
+}
+
+void clearRanchRushNetworkPlayer(int playerIndex, int lane) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+  clearRanchRushPlayerAt(rrNetPlayerX[playerIndex], lane);
+}
+
+void drawRanchRushAnimal(const RanchAnimal &animal) {
+  if (!animal.active) return;
+
+  int x = (int)animal.x;
+  int y = rrLaneY[animal.lane];
+  uint16_t ranchBrown = rgb888to565(138, 65, 17);
+  uint16_t darkBrown = rgb888to565(81, 40, 0);
+  uint16_t bodyColor = ranchBrown;
+  uint16_t headColor = ranchBrown;
+
+  if (animal.type == 1) {
+    bodyColor = darkBrown;
+    headColor = darkBrown;
+  } else if (animal.type == 2) {
+    bodyColor = RGB565_WHITE;
+    headColor = RGB565_WHITE;
+  }
+
+  gfx->fillRect(x - 12, y + 8, 28, 13, bodyColor);
+  gfx->fillCircle(x + 16, y + 12, 6, bodyColor);
+  gfx->fillCircle(x + 22, y + 8, 5, headColor);
+
+  gfx->fillRect(x - 6, y + 20, 3, 10, bodyColor);
+  gfx->fillRect(x + 4, y + 20, 3, 10, bodyColor);
+  gfx->fillRect(x + 12, y + 20, 3, 10, bodyColor);
+
+  if (animal.type == 0 || animal.type == 1) {
+    gfx->drawLine(x + 20, y + 4, x + 15, y - 3, RGB565_WHITE);
+    gfx->drawLine(x + 24, y + 4, x + 30, y - 3, RGB565_WHITE);
+  } else {
+    gfx->drawLine(x + 21, y + 3, x + 19, y - 2, headColor);
+    gfx->drawLine(x + 23, y + 3, x + 25, y - 2, headColor);
+  }
+
+  gfx->drawLine(x - 12, y + 11, x - 22, y + 5, bodyColor);
+
+  if (animal.type == 0) {
+    gfx->fillRect(x - 4, y + 10, 4, 4, RGB565_BLACK);
+    gfx->fillRect(x + 8, y + 12, 3, 3, RGB565_BLACK);
+  }
+}
+
+void clearRanchRushAnimal(int x, int y) {
+  clearRanchRushSprite(x - 24, y - 5, 58, 38);
+}
+
+void drawRanchRushLassoAt(int playerX, int lane, float lassoX, uint16_t color) {
+  int y = rrLaneY[lane];
+  int px = playerX + 18;
+  int lx = (int)lassoX;
+
+  gfx->drawLine(px, y + 8, lx, y + 8, color);
+  gfx->drawCircle(lx, y + 8, 10, color);
+  gfx->drawCircle(lx, y + 8, 11, color);
+}
+
+void clearRanchRushLassoAt(int playerX, int lane, float lassoX) {
+  int y = rrLaneY[lane];
+  int px = playerX + 18;
+  int lx = (int)lassoX;
+  int x0 = min(px, lx) - 14;
+  int x1 = max(px, lx) + 14;
+
+  clearRanchRushSprite(x0, y - 4, x1 - x0, 26);
+}
+
+void drawRanchRushLasso() {
+  if (!rrLassoActive) return;
+  drawRanchRushLassoAt(rrPlayerX, rrLassoLane, rrLassoX, RGB565_WHITE);
+}
+
+void clearRanchRushLasso() {
+  if (!rrPrevLassoActive) return;
+  clearRanchRushLassoAt(rrPlayerX, rrPrevLassoLane, rrPrevLassoX);
+}
+
+void drawRanchRushNetworkLasso(int playerIndex) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+  if (!rrNetLassoActive[playerIndex]) return;
+
+  drawRanchRushLassoAt(rrNetPlayerX[playerIndex],
+                       rrNetLassoLane[playerIndex],
+                       rrNetLassoX[playerIndex],
+                       ranchRushPlayerLassoColor(playerIndex));
+}
+
+void clearRanchRushNetworkLasso(int playerIndex) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+  if (!rrNetPrevLassoActive[playerIndex]) return;
+
+  clearRanchRushLassoAt(rrNetPlayerX[playerIndex],
+                        rrNetPrevLassoLane[playerIndex],
+                        rrNetPrevLassoX[playerIndex]);
+}
+
+void drawRanchRushGameOverOverlay() {
+  if (!localGame) {
+    gfx->fillRoundRect(28, 122, 264, 230, 10, rgb888to565(40, 30, 10));
+    gfx->drawRoundRect(28, 122, 264, 230, 10, RGB565_RED);
+    gfx->drawRoundRect(34, 128, 252, 218, 8, RGB565_YELLOW);
+
+    const char *title = "DRAW";
+    uint16_t titleColor = RGB565_YELLOW;
+    int localPlayer = (myPlayer == '2') ? 2 : 1;
+
+    if (rrNetWinner == localPlayer) {
+      title = "YOU WIN";
+      titleColor = RGB565_GREEN;
+    } else if (rrNetWinner == 1 || rrNetWinner == 2) {
+      title = "YOU LOSE";
+      titleColor = RGB565_RED;
+    }
+
+    drawCenteredText(title, 154, 3, titleColor);
+
+    char line[48];
+    snprintf(line, sizeof(line), "P1:%d   P2:%d", rrNetScore[0], rrNetScore[1]);
+    drawCenteredText(line, 214, 2, RGB565_WHITE);
+
+    snprintf(line, sizeof(line), "Lives %d - %d", rrNetLives[0], rrNetLives[1]);
+    drawCenteredText(line, 246, 2, RGB565_CYAN);
+    drawCenteredText("Tap play again", 292, 1, RGB565_CYAN);
+    return;
+  }
+
+  if (rrScore > 0 && (uint32_t)rrScore >= rrHiScore) {
+    rrHiScore = rrScore;
+    saveRanchRushScore();
+  }
+
+  gfx->fillRoundRect(28, 122, 264, 230, 10, rgb888to565(40, 30, 10));
+  gfx->drawRoundRect(28, 122, 264, 230, 10, RGB565_RED);
+  gfx->drawRoundRect(34, 128, 252, 218, 8, RGB565_YELLOW);
+
+  drawCenteredText("GAME OVER", 154, 3, RGB565_RED);
+
+  char line[40];
+  snprintf(line, sizeof(line), "Score: %d", rrScore);
+  drawCenteredText(line, 214, 2, RGB565_GREEN);
+
+  snprintf(line, sizeof(line), "High: %lu", (unsigned long)rrHiScore);
+  drawCenteredText(line, 246, 2, RGB565_YELLOW);
+  drawCenteredText("Tap to restart", 292, 1, RGB565_CYAN);
+}
+
+void drawRanchRushFullScene() {
+  gfx->fillScreen(RGB565_BLACK);
+  drawRanchRushField();
+  drawRanchRushHud();
+  drawRanchRushHudValues();
+  drawRanchRushControls();
+
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    if (rrAnimals[i].active) {
+      drawRanchRushAnimal(rrAnimals[i]);
+      rrPrevAnimals[i].x = (int)rrAnimals[i].x;
+      rrPrevAnimals[i].y = rrLaneY[rrAnimals[i].lane];
+      rrPrevAnimals[i].wasActive = true;
+    } else {
+      rrPrevAnimals[i].wasActive = false;
+    }
+  }
+
+  if (localGame) {
+    drawRanchRushPlayer(rrPlayerLane);
+    rrPrevPlayerLane = rrPlayerLane;
+    rrPrevLassoActive = rrLassoActive;
+    rrPrevLassoX = rrLassoX;
+    rrPrevLassoLane = rrLassoLane;
+    drawRanchRushLasso();
+  } else {
+    for (int p = 0; p < 2; p++) {
+      drawRanchRushNetworkPlayer(p);
+      rrNetPrevPlayerLane[p] = rrNetPlayerLane[p];
+      rrNetPrevLassoActive[p] = rrNetLassoActive[p];
+      rrNetPrevLassoX[p] = rrNetLassoX[p];
+      rrNetPrevLassoLane[p] = rrNetLassoLane[p];
+      drawRanchRushNetworkLasso(p);
+    }
+  }
+
+  rrRanchSceneReady = true;
+}
+
+void drawRanchRushGameFrame() {
+  if (localGame) {
+    clearRanchRushLasso();
+
+    if (rrPrevPlayerLane >= 0 && rrPrevPlayerLane != rrPlayerLane) {
+      clearRanchRushPlayer(rrPrevPlayerLane);
+    }
+  } else {
+    for (int p = 0; p < 2; p++) {
+      clearRanchRushNetworkLasso(p);
+
+      if (rrNetPrevPlayerLane[p] >= 0 && rrNetPrevPlayerLane[p] != rrNetPlayerLane[p]) {
+        clearRanchRushNetworkPlayer(p, rrNetPrevPlayerLane[p]);
+      }
+    }
+  }
+
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    if (rrPrevAnimals[i].wasActive) {
+      clearRanchRushAnimal(rrPrevAnimals[i].x, rrPrevAnimals[i].y);
+    }
+  }
+
+  drawRanchRushLaneLines();
+
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    if (rrAnimals[i].active) {
+      drawRanchRushAnimal(rrAnimals[i]);
+      rrPrevAnimals[i].x = (int)rrAnimals[i].x;
+      rrPrevAnimals[i].y = rrLaneY[rrAnimals[i].lane];
+      rrPrevAnimals[i].wasActive = true;
+    } else {
+      rrPrevAnimals[i].wasActive = false;
+    }
+  }
+
+  if (localGame) {
+    drawRanchRushPlayer(rrPlayerLane);
+    rrPrevPlayerLane = rrPlayerLane;
+
+    drawRanchRushLasso();
+    rrPrevLassoActive = rrLassoActive;
+    rrPrevLassoX = rrLassoX;
+    rrPrevLassoLane = rrLassoLane;
+  } else {
+    for (int p = 0; p < 2; p++) {
+      drawRanchRushNetworkPlayer(p);
+      rrNetPrevPlayerLane[p] = rrNetPlayerLane[p];
+
+      drawRanchRushNetworkLasso(p);
+      rrNetPrevLassoActive[p] = rrNetLassoActive[p];
+      rrNetPrevLassoX[p] = rrNetLassoX[p];
+      rrNetPrevLassoLane[p] = rrNetLassoLane[p];
+    }
+  }
+
+  drawRanchRushHudValues();
+}
+
+void initRanchRushLanes() {
+  for (int i = 0; i < RR_LANES; i++) {
+    rrLaneY[i] = RR_LANE_START_Y + i * RR_LANE_SPACING;
+  }
+}
+
+void resetRanchRushRenderCache() {
+  rrPrevPlayerLane = -1;
+  rrPrevLassoActive = false;
+
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    rrPrevAnimals[i].wasActive = false;
+  }
+
+  for (int p = 0; p < 2; p++) {
+    rrNetPrevPlayerLane[p] = -1;
+    rrNetPrevLassoActive[p] = false;
+  }
+
+  rrRanchSceneReady = false;
+}
+
+void newRanchRushGame() {
+  activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
+  localGame = true;
+  appState = STATE_RR_PLAYING;
+  rrScore = 0;
+  rrLives = 3;
+  rrLevel = 1;
+  rrPlayerLane = 2;
+  rrLassoActive = false;
+  rrPrevLassoActive = false;
+  rrPrevPlayerLane = -1;
+  rrLastSpawn = millis();
+  rrLastFrame = millis();
+  rrGameOver = false;
+
+  initRanchRushLanes();
+  resetRanchRushRenderCache();
+
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    rrAnimals[i].active = false;
+  }
+
+  drawRanchRushFullScene();
+}
+
+void spawnRanchRushAnimal() {
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    if (!rrAnimals[i].active) {
+      rrAnimals[i].active = true;
+      rrAnimals[i].x = screenW + random(20, 100);
+      rrAnimals[i].lane = random(0, RR_LANES);
+      rrAnimals[i].speed = 1.5f + rrLevel * 0.5f + random(0, 10) * 0.1f;
+      rrAnimals[i].type = random(0, 3);
+      return;
+    }
+  }
+}
+
+void startRanchRushLasso() {
+  if (rrLassoActive) return;
+
+  rrLassoActive = true;
+  rrLassoX = rrPlayerX + 30;
+  rrLassoLane = rrPlayerLane;
+  rrLassoStart = millis();
+  beepClick();
+}
+
+void finishRanchRushGame() {
+  rrGameOver = true;
+  beepDraw();
+  drawRanchRushGameOverOverlay();
+}
+
+void loseRanchRushLife() {
+  rrLives--;
+  beepDraw();
+
+  if (rrLives <= 0) {
+    finishRanchRushGame();
+  }
+}
+
+void updateRanchRushLasso() {
+  if (!rrLassoActive) return;
+
+  rrLassoX += 14;
+
+  if (rrLassoX > screenW - 10 || millis() - rrLassoStart > 550) {
+    rrLassoActive = false;
+    return;
+  }
+
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    if (!rrAnimals[i].active) continue;
+    if (rrAnimals[i].lane != rrLassoLane) continue;
+
+    float dx = rrAnimals[i].x - rrLassoX;
+
+    if (fabs(dx) < 22.0f) {
+      rrAnimals[i].active = false;
+
+      int points = 10;
+      if (rrAnimals[i].type == 1) {
+        points = 20;
+      } else if (rrAnimals[i].type == 2) {
+        points = 15;
+      }
+
+      rrScore += points;
+
+      if ((uint32_t)rrScore > rrHiScore) {
+        rrHiScore = rrScore;
+      }
+
+      beepMove();
+      rrLassoActive = false;
+
+      if (rrScore > 0 && rrScore % 100 == 0) {
+        rrLevel++;
+        beepWin();
+      }
+
+      return;
+    }
+  }
+}
+
+void updateRanchRushAnimals() {
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    if (!rrAnimals[i].active) continue;
+
+    rrAnimals[i].x -= rrAnimals[i].speed;
+
+    if (rrAnimals[i].x < -30) {
+      rrAnimals[i].active = false;
+      loseRanchRushLife();
+      if (rrGameOver) return;
+      continue;
+    }
+
+    if (rrAnimals[i].lane == rrPlayerLane &&
+        rrAnimals[i].x < rrPlayerX + 25 &&
+        rrAnimals[i].x > rrPlayerX - 20) {
+      rrAnimals[i].active = false;
+      loseRanchRushLife();
+      if (rrGameOver) return;
+    }
+  }
+}
+
+int ranchRushLocalNetworkPlayerIndex() {
+  return (myPlayer == '2') ? 1 : 0;
+}
+
+void startRanchRushNetworkLasso(int playerIndex) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+  if (rrNetLassoActive[playerIndex]) return;
+
+  rrNetLassoActive[playerIndex] = true;
+  rrNetLassoX[playerIndex] = rrNetPlayerX[playerIndex] + 30;
+  rrNetLassoLane[playerIndex] = rrNetPlayerLane[playerIndex];
+  rrNetLassoStart[playerIndex] = millis();
+}
+
+void applyRanchRushNetworkInput(int playerIndex, int action, bool localFeedback) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+  if (rrNetGameOver) return;
+
+  if (action == 0) {
+    if (rrNetPlayerLane[playerIndex] > 0) {
+      rrNetPlayerLane[playerIndex]--;
+      if (localFeedback) beepClick();
+    }
+  } else if (action == 1) {
+    if (rrNetPlayerLane[playerIndex] < RR_LANES - 1) {
+      rrNetPlayerLane[playerIndex]++;
+      if (localFeedback) beepClick();
+    }
+  } else if (action == 2) {
+    startRanchRushNetworkLasso(playerIndex);
+    if (localFeedback) beepClick();
+  }
+}
+
+void sendRanchRushState(bool force);
+
+void sendRanchRushInput(int action) {
+  if (localGame || !networkConnected) return;
+
+  String msg = "RR_INPUT:";
+  msg += String(ranchRushLocalNetworkPlayerIndex());
+  msg += ",";
+  msg += String(action);
+  sendNetMessage(msg);
+}
+
+void applyRanchRushPlayerAction(int action) {
+  if (localGame) {
+    if (action == 0) {
+      if (rrPlayerLane > 0) {
+        rrPlayerLane--;
+        beepClick();
+      }
+    } else if (action == 1) {
+      if (rrPlayerLane < RR_LANES - 1) {
+        rrPlayerLane++;
+        beepClick();
+      }
+    } else if (action == 2) {
+      startRanchRushLasso();
+    }
+
+    return;
+  }
+
+  int playerIndex = ranchRushLocalNetworkPlayerIndex();
+  applyRanchRushNetworkInput(playerIndex, action, true);
+
+  if (!isHost) {
+    sendRanchRushInput(action);
+  } else {
+    sendRanchRushState(true);
+  }
+
+  if (rrRanchSceneReady && !rrNetGameOver) {
+    drawRanchRushGameFrame();
+  }
+}
+
+void finishRanchRushNetworkGame() {
+  if (rrNetGameOver) return;
+
+  rrNetGameOver = true;
+
+  if (rrNetLives[0] <= 0 && rrNetLives[1] <= 0) {
+    rrNetWinner = 3;
+  } else if (rrNetLives[0] <= 0) {
+    rrNetWinner = 2;
+  } else if (rrNetLives[1] <= 0) {
+    rrNetWinner = 1;
+  } else {
+    rrNetWinner = 3;
+  }
+
+  myTurn = false;
+  beepDraw();
+  drawRanchRushGameFrame();
+  drawRanchRushGameOverOverlay();
+}
+
+void loseRanchRushNetworkLife(int playerIndex) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+  if (rrNetLives[playerIndex] <= 0) return;
+
+  rrNetLives[playerIndex]--;
+  beepDraw();
+
+  if (rrNetLives[0] <= 0 || rrNetLives[1] <= 0) {
+    finishRanchRushNetworkGame();
+  }
+}
+
+void updateRanchRushNetworkLevel() {
+  int totalScore = rrNetScore[0] + rrNetScore[1];
+  int newLevel = 1 + totalScore / 100;
+
+  if (newLevel > rrLevel) {
+    rrLevel = newLevel;
+    beepWin();
+  }
+}
+
+void updateRanchRushNetworkLassos() {
+  for (int p = 0; p < 2; p++) {
+    if (!rrNetLassoActive[p]) continue;
+
+    rrNetLassoX[p] += 14.0f;
+
+    if (rrNetLassoX[p] > screenW - 10 || millis() - rrNetLassoStart[p] > 550) {
+      rrNetLassoActive[p] = false;
+      continue;
+    }
+
+    for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+      if (!rrAnimals[i].active) continue;
+      if (rrAnimals[i].lane != rrNetLassoLane[p]) continue;
+
+      float dx = rrAnimals[i].x - rrNetLassoX[p];
+
+      if (fabs(dx) < 22.0f) {
+        rrAnimals[i].active = false;
+
+        int points = 10;
+        if (rrAnimals[i].type == 1) {
+          points = 20;
+        } else if (rrAnimals[i].type == 2) {
+          points = 15;
+        }
+
+        rrNetScore[p] += points;
+        rrNetLassoActive[p] = false;
+        beepMove();
+        updateRanchRushNetworkLevel();
+        break;
+      }
+    }
+  }
+}
+
+void updateRanchRushNetworkAnimals() {
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    if (!rrAnimals[i].active) continue;
+
+    rrAnimals[i].x -= rrAnimals[i].speed;
+
+    if (rrAnimals[i].x < -30) {
+      rrAnimals[i].active = false;
+      loseRanchRushNetworkLife(0);
+
+      if (!rrNetGameOver) {
+        loseRanchRushNetworkLife(1);
+      }
+
+      if (rrNetGameOver) return;
+      continue;
+    }
+
+    for (int p = 0; p < 2; p++) {
+      if (rrAnimals[i].lane == rrNetPlayerLane[p] &&
+          rrAnimals[i].x < rrNetPlayerX[p] + 25 &&
+          rrAnimals[i].x > rrNetPlayerX[p] - 20) {
+        rrAnimals[i].active = false;
+        loseRanchRushNetworkLife(p);
+
+        if (rrNetGameOver) return;
+        break;
+      }
+    }
+  }
+}
+
+void sendRanchRushState(bool force) {
+  if (localGame || !isHost || !networkConnected) return;
+
+  unsigned long now = millis();
+
+  if (!force && now - rrLastStateSendTime < RR_NET_STATE_MS) {
+    return;
+  }
+
+  rrLastStateSendTime = now;
+
+  String msg = "RR_STATE:";
+  msg.reserve(260);
+
+  msg += String(rrNetGameOver ? 1 : 0);
+  msg += ",";
+  msg += String(rrNetWinner);
+  msg += ",";
+  msg += String(rrNetScore[0]);
+  msg += ",";
+  msg += String(rrNetScore[1]);
+  msg += ",";
+  msg += String(rrNetLives[0]);
+  msg += ",";
+  msg += String(rrNetLives[1]);
+  msg += ",";
+  msg += String(rrLevel);
+  msg += ",";
+  msg += String(rrNetPlayerLane[0]);
+  msg += ",";
+  msg += String(rrNetPlayerLane[1]);
+
+  for (int p = 0; p < 2; p++) {
+    msg += ",";
+    msg += String(rrNetLassoActive[p] ? 1 : 0);
+    msg += ",";
+    msg += String((int)rrNetLassoX[p]);
+    msg += ",";
+    msg += String(rrNetLassoLane[p]);
+  }
+
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    msg += ",";
+    msg += String(rrAnimals[i].active ? 1 : 0);
+    msg += ",";
+    msg += String((int)rrAnimals[i].x);
+    msg += ",";
+    msg += String(rrAnimals[i].lane);
+    msg += ",";
+    msg += String(rrAnimals[i].type);
+  }
+
+  sendNetMessage(msg);
+}
+
+void applyRemoteRanchRushState(const String &payload) {
+  activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
+  localGame = false;
+  appState = STATE_RR_PLAYING;
+  initRanchRushLanes();
+
+  int start = 0;
+  int gameOverValue, winnerValue, scoreP1, scoreP2, livesP1, livesP2, levelValue, laneP1, laneP2;
+
+  if (!readCsvInt(payload, start, gameOverValue)) return;
+  if (!readCsvInt(payload, start, winnerValue)) return;
+  if (!readCsvInt(payload, start, scoreP1)) return;
+  if (!readCsvInt(payload, start, scoreP2)) return;
+  if (!readCsvInt(payload, start, livesP1)) return;
+  if (!readCsvInt(payload, start, livesP2)) return;
+  if (!readCsvInt(payload, start, levelValue)) return;
+  if (!readCsvInt(payload, start, laneP1)) return;
+  if (!readCsvInt(payload, start, laneP2)) return;
+
+  bool wasGameOver = rrNetGameOver;
+  rrNetGameOver = (gameOverValue != 0);
+  rrNetWinner = winnerValue;
+  rrNetScore[0] = scoreP1;
+  rrNetScore[1] = scoreP2;
+  rrNetLives[0] = livesP1;
+  rrNetLives[1] = livesP2;
+  rrLevel = levelValue;
+  rrNetPlayerLane[0] = constrain(laneP1, 0, RR_LANES - 1);
+  rrNetPlayerLane[1] = constrain(laneP2, 0, RR_LANES - 1);
+
+  for (int p = 0; p < 2; p++) {
+    int lassoActive, lassoX, lassoLane;
+
+    if (!readCsvInt(payload, start, lassoActive)) return;
+    if (!readCsvInt(payload, start, lassoX)) return;
+    if (!readCsvInt(payload, start, lassoLane)) return;
+
+    rrNetLassoActive[p] = (lassoActive != 0);
+    rrNetLassoX[p] = (float)lassoX;
+    rrNetLassoLane[p] = constrain(lassoLane, 0, RR_LANES - 1);
+  }
+
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    int active, x, lane, type;
+
+    if (!readCsvInt(payload, start, active)) return;
+    if (!readCsvInt(payload, start, x)) return;
+    if (!readCsvInt(payload, start, lane)) return;
+    if (!readCsvInt(payload, start, type)) return;
+
+    rrAnimals[i].active = (active != 0);
+    rrAnimals[i].x = (float)x;
+    rrAnimals[i].lane = constrain(lane, 0, RR_LANES - 1);
+    rrAnimals[i].type = constrain(type, 0, 2);
+  }
+
+  if (!rrRanchSceneReady || (!wasGameOver && rrNetGameOver)) {
+    drawRanchRushFullScene();
+  } else {
+    drawRanchRushGameFrame();
+  }
+
+  if (rrNetGameOver) {
+    if (!wasGameOver) {
+      int localPlayer = (myPlayer == '2') ? 2 : 1;
+      if (rrNetWinner == localPlayer) {
+        beepWin();
+      } else {
+        beepDraw();
+      }
+    }
+
+    drawRanchRushGameOverOverlay();
+  }
+}
+
+void updateRanchRushGame() {
+  if (appState != STATE_RR_PLAYING) return;
+
+  if (!localGame) {
+    if (!isHost || rrNetGameOver) return;
+
+    unsigned long now = millis();
+
+    if (now - rrLastFrame < RR_FRAME_MS) return;
+    rrLastFrame = now;
+
+    int spawnDelay = 1400 - rrLevel * 130;
+    if (spawnDelay < 400) {
+      spawnDelay = 400;
+    }
+
+    if (now - rrLastSpawn > (unsigned long)spawnDelay) {
+      spawnRanchRushAnimal();
+      rrLastSpawn = now;
+    }
+
+    updateRanchRushNetworkAnimals();
+
+    if (!rrNetGameOver) {
+      updateRanchRushNetworkLassos();
+      drawRanchRushGameFrame();
+    }
+
+    sendRanchRushState(rrNetGameOver);
+    return;
+  }
+
+  if (rrGameOver) return;
+
+  unsigned long now = millis();
+
+  if (now - rrLastFrame < RR_FRAME_MS) return;
+  rrLastFrame = now;
+
+  int spawnDelay = 1400 - rrLevel * 130;
+  if (spawnDelay < 400) {
+    spawnDelay = 400;
+  }
+
+  if (now - rrLastSpawn > (unsigned long)spawnDelay) {
+    spawnRanchRushAnimal();
+    rrLastSpawn = now;
+  }
+
+  updateRanchRushAnimals();
+  if (rrGameOver) return;
+
+  updateRanchRushLasso();
+  drawRanchRushGameFrame();
+}
+
+void startRanchRushLocalGame() {
+  activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
+  stopNetwork();
+  localGame = true;
+  beepStart();
+  newRanchRushGame();
+}
+
+void newRanchRushNetworkGame() {
+  activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
+  localGame = false;
+  appState = STATE_RR_PLAYING;
+  myTurn = true;
+  rrLevel = 1;
+  rrNetScore[0] = 0;
+  rrNetScore[1] = 0;
+  rrNetLives[0] = 3;
+  rrNetLives[1] = 3;
+  rrNetPlayerLane[0] = 2;
+  rrNetPlayerLane[1] = 2;
+  rrNetLassoActive[0] = false;
+  rrNetLassoActive[1] = false;
+  rrNetGameOver = false;
+  rrNetWinner = 0;
+  rrLastSpawn = millis();
+  rrLastFrame = millis();
+  rrLastStateSendTime = 0;
+
+  initRanchRushLanes();
+  resetRanchRushRenderCache();
+
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    rrAnimals[i].active = false;
+  }
+
+  drawRanchRushFullScene();
+}
+
+void startRanchRushNetworkGame() {
+  activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
+  localGame = false;
+  myTurn = true;
+  beepStart();
+
+  if (isHost) {
+    newRanchRushNetworkGame();
+    sendRanchRushState(true);
+    return;
+  }
+
+  rrLevel = 1;
+  rrNetScore[0] = 0;
+  rrNetScore[1] = 0;
+  rrNetLives[0] = 3;
+  rrNetLives[1] = 3;
+  rrNetPlayerLane[0] = 2;
+  rrNetPlayerLane[1] = 2;
+  rrNetLassoActive[0] = false;
+  rrNetLassoActive[1] = false;
+  rrNetGameOver = false;
+  rrNetWinner = 0;
+  initRanchRushLanes();
+  resetRanchRushRenderCache();
+
+  for (int i = 0; i < RR_MAX_ANIMALS; i++) {
+    rrAnimals[i].active = false;
+  }
+
+  appState = STATE_RR_PLAYING;
+  drawRanchRushFullScene();
+  drawCenteredText("Waiting host", 184, 2, RGB565_YELLOW);
+  rrRanchSceneReady = false;
+}
+
 void drawPocketTanksMenuScreen() {
   activeNetworkGame = NETWORK_GAME_PT;
   localGame = false;
@@ -4637,6 +5923,7 @@ void drawWaitingHostScreen() {
   bool breakoutNetworkGame = (activeNetworkGame == NETWORK_GAME_BREAKOUT);
   bool pongNetworkGame = (activeNetworkGame == NETWORK_GAME_PONG);
   bool snakeNetworkGame = (activeNetworkGame == NETWORK_GAME_SNAKE);
+  bool ranchNetworkGame = (activeNetworkGame == NETWORK_GAME_RANCH_RUSH);
 
   gfx->fillScreen(RGB565_BLACK);
 
@@ -4644,6 +5931,8 @@ void drawWaitingHostScreen() {
     drawCenteredText("PONG HOST", 28, 3, RGB565_GREEN);
   } else if (snakeNetworkGame) {
     drawCenteredText("SNAKE HOST", 28, 3, RGB565_GREEN);
+  } else if (ranchNetworkGame) {
+    drawCenteredText("RANCH HOST", 28, 3, RGB565_GREEN);
   } else if (breakoutNetworkGame) {
     drawCenteredText("BREAKOUT HOST", 28, 2, RGB565_GREEN);
   } else if (tanksNetworkGame) {
@@ -4652,7 +5941,7 @@ void drawWaitingHostScreen() {
     drawCenteredText(rpsNetworkGame ? "RPS HOST" : "HOST ACTIV", 28, 3, RGB565_GREEN);
   }
 
-  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame) ? "Tu esti P1" : "Tu esti X", 72, 2, RGB565_WHITE);
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame) ? "Tu esti P1" : "Tu esti X", 72, 2, RGB565_WHITE);
 
   drawCenteredText("Asteapta oponentul", 118, 2, RGB565_YELLOW);
   drawCenteredText("sa intre cu JOIN", 145, 2, RGB565_YELLOW);
@@ -4676,6 +5965,7 @@ void drawConnectingJoinScreen() {
   bool breakoutNetworkGame = (activeNetworkGame == NETWORK_GAME_BREAKOUT);
   bool pongNetworkGame = (activeNetworkGame == NETWORK_GAME_PONG);
   bool snakeNetworkGame = (activeNetworkGame == NETWORK_GAME_SNAKE);
+  bool ranchNetworkGame = (activeNetworkGame == NETWORK_GAME_RANCH_RUSH);
 
   gfx->fillScreen(RGB565_BLACK);
 
@@ -4683,6 +5973,8 @@ void drawConnectingJoinScreen() {
     drawCenteredText("PONG JOIN", 70, 3, RGB565_BLUE);
   } else if (snakeNetworkGame) {
     drawCenteredText("SNAKE JOIN", 70, 3, RGB565_BLUE);
+  } else if (ranchNetworkGame) {
+    drawCenteredText("RANCH JOIN", 70, 3, RGB565_BLUE);
   } else if (breakoutNetworkGame) {
     drawCenteredText("BREAKOUT JOIN", 70, 2, RGB565_BLUE);
   } else if (tanksNetworkGame) {
@@ -4691,7 +5983,7 @@ void drawConnectingJoinScreen() {
     drawCenteredText(rpsNetworkGame ? "RPS JOIN" : "JOIN", 70, 3, RGB565_BLUE);
   }
 
-  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame) ? "Tu esti P2" : "Tu esti O", 120, 2, RGB565_WHITE);
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame) ? "Tu esti P2" : "Tu esti O", 120, 2, RGB565_WHITE);
 
   drawCenteredText("Connecting...", 190, 2, RGB565_YELLOW);
 
@@ -4894,6 +6186,7 @@ void startPocketTanksNetworkGame();
 void startBreakoutNetworkGame();
 void startPongNetworkGame();
 void startSnakeNetworkGame();
+void startRanchRushNetworkGame();
 
 // ============================================================================
 // NETWORK
@@ -4905,6 +6198,7 @@ const char *getNetworkGameCode() {
   if (activeNetworkGame == NETWORK_GAME_BREAKOUT) return "BRK";
   if (activeNetworkGame == NETWORK_GAME_PONG) return "PONG";
   if (activeNetworkGame == NETWORK_GAME_SNAKE) return "SNK";
+  if (activeNetworkGame == NETWORK_GAME_RANCH_RUSH) return "RANCH";
   return "TTT";
 }
 
@@ -4934,6 +6228,8 @@ void applyNetworkGameCode(const String &code) {
     activeNetworkGame = NETWORK_GAME_PONG;
   } else if (gameCode == "SNK") {
     activeNetworkGame = NETWORK_GAME_SNAKE;
+  } else if (gameCode == "RANCH") {
+    activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
   } else if (gameCode == "TTT") {
     activeNetworkGame = NETWORK_GAME_TTT;
   }
@@ -5071,7 +6367,8 @@ void beginHostNetwork() {
             activeNetworkGame == NETWORK_GAME_PT ||
             activeNetworkGame == NETWORK_GAME_BREAKOUT ||
             activeNetworkGame == NETWORK_GAME_PONG ||
-            activeNetworkGame == NETWORK_GAME_SNAKE);
+            activeNetworkGame == NETWORK_GAME_SNAKE ||
+            activeNetworkGame == NETWORK_GAME_RANCH_RUSH);
 
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(HOST_IP, HOST_IP, IPAddress(255, 255, 255, 0));
@@ -5153,6 +6450,11 @@ void startNetworkGame() {
 
   if (activeNetworkGame == NETWORK_GAME_SNAKE) {
     startSnakeNetworkGame();
+    return;
+  }
+
+  if (activeNetworkGame == NETWORK_GAME_RANCH_RUSH) {
+    startRanchRushNetworkGame();
     return;
   }
 
@@ -5682,6 +6984,8 @@ void returnToMenu(bool notifyPeer) {
     drawPongMenuScreen();
   } else if (activeNetworkGame == NETWORK_GAME_SNAKE) {
     drawSnakeMenuScreen();
+  } else if (activeNetworkGame == NETWORK_GAME_RANCH_RUSH) {
+    drawRanchRushMenuScreen();
   } else {
     appState = STATE_MENU;
     drawMenuScreen();
@@ -5704,7 +7008,7 @@ void returnToHome(bool notifyPeer) {
 // ============================================================================
 // Text protocol over TCP. Messages are line-based and intentionally simple:
 // START:<game>, NEW:<game>, MOVE:col,row, RPS_CHOICE:n, PT_* messages,
-// PN_* messages, SN_* messages, BR_LOSE, LEAVE.
+// PN_* messages, SN_* messages, RR_* messages, BR_LOSE, LEAVE.
 void handleNetMessage(String msg) {
   msg.trim();
 
@@ -5780,6 +7084,33 @@ void handleNetMessage(String msg) {
     return;
   }
 
+  if (msg.startsWith("RR_INPUT:")) {
+    activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
+
+    if (isHost) {
+      int comma = msg.indexOf(',');
+
+      if (comma > 9) {
+        int playerIndex = msg.substring(9, comma).toInt();
+        int action = msg.substring(comma + 1).toInt();
+        applyRanchRushNetworkInput(playerIndex, action, false);
+        sendRanchRushState(true);
+      }
+    }
+
+    return;
+  }
+
+  if (msg.startsWith("RR_STATE:")) {
+    activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
+
+    if (!isHost) {
+      applyRemoteRanchRushState(msg.substring(9));
+    }
+
+    return;
+  }
+
   if (msg.startsWith("PT_ANGLE:")) {
     int comma = msg.indexOf(',');
 
@@ -5846,7 +7177,9 @@ void pollNetwork() {
         appState == STATE_BREAKOUT_PLAYING ||
         appState == STATE_PONG_PLAYING ||
         appState == STATE_SNAKE_PLAYING ||
-        appState == STATE_SNAKE_PLACEHOLDER) {
+        appState == STATE_SNAKE_PLACEHOLDER ||
+        appState == STATE_RR_PLAYING ||
+        appState == STATE_RR_PLACEHOLDER) {
       gfx->fillScreen(RGB565_BLACK);
       drawCenteredText("Conexiune pierduta", 180, 2, RGB565_RED);
       delay(1200);
@@ -5974,6 +7307,12 @@ void handleGamesMoreTouch(int x, int y) {
   if (inRect(x, y, btnGamesX, btnGamesPongY, btnGamesW, btnGamesH)) {
     beepClick();
     drawPongMenuScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnGamesX, btnGamesRanchRushY, btnGamesW, btnGamesH)) {
+    beepClick();
+    drawRanchRushMenuScreen();
     return;
   }
 
@@ -6167,6 +7506,94 @@ void handleSnakePlaceholderTouch(int x, int y) {
       drawSnakeMenuScreen();
     } else {
       returnToMenu(true);
+    }
+
+    return;
+  }
+}
+
+void handleRanchRushMenuTouch(int x, int y) {
+  if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
+    startRanchRushLocalGame();
+    return;
+  }
+
+  if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
+    startHostMode();
+    return;
+  }
+
+  if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
+    beepStart();
+    activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
+    startJoinMode();
+    return;
+  }
+
+  if (inRect(x, y, btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH)) {
+    beepClick();
+    drawGamesMoreScreen();
+    return;
+  }
+}
+
+void handleRanchRushPlaceholderTouch(int x, int y) {
+  if (inRect(x, y, btnEmptyBackX, btnEmptyBackY, btnEmptyBackW, btnEmptyBackH)) {
+    beepClick();
+
+    if (localGame) {
+      drawRanchRushMenuScreen();
+    } else {
+      returnToMenu(true);
+    }
+
+    return;
+  }
+}
+
+void handleRanchRushPlayingTouch(int x, int y) {
+  if (inRect(x, y, btnRrMenuX, btnRrMenuY, btnRrMenuW, btnRrMenuH)) {
+    beepClick();
+    if (localGame) {
+      drawRanchRushMenuScreen();
+    } else {
+      returnToMenu(true);
+    }
+    return;
+  }
+
+  if ((localGame && rrGameOver) || (!localGame && rrNetGameOver)) {
+    beepStart();
+    if (localGame) {
+      newRanchRushGame();
+    } else {
+      sendNetMessage(buildNetworkMessage("NEW"));
+      startNetworkGame();
+    }
+    return;
+  }
+
+  if (y >= RR_BTN_AREA_TOP) {
+    if (x < 110) {
+      applyRanchRushPlayerAction(0);
+    } else if (x < 210) {
+      applyRanchRushPlayerAction(1);
+    } else {
+      applyRanchRushPlayerAction(2);
+    }
+
+    return;
+  }
+
+  if (y >= RR_FIELD_TOP && y < RR_FIELD_BOT) {
+    int fieldMid = (RR_FIELD_TOP + RR_FIELD_BOT) / 2;
+
+    if (y < fieldMid) {
+      applyRanchRushPlayerAction(0);
+    } else {
+      applyRanchRushPlayerAction(1);
     }
 
     return;
@@ -6818,6 +8245,12 @@ void handleTouch(int x, int y) {
     handleSnakePlayingTouch(x, y);
   } else if (appState == STATE_SNAKE_PLACEHOLDER) {
     handleSnakePlaceholderTouch(x, y);
+  } else if (appState == STATE_RANCH_RUSH) {
+    handleRanchRushMenuTouch(x, y);
+  } else if (appState == STATE_RR_PLAYING) {
+    handleRanchRushPlayingTouch(x, y);
+  } else if (appState == STATE_RR_PLACEHOLDER) {
+    handleRanchRushPlaceholderTouch(x, y);
   } else if (appState == STATE_EMPTY_GAME) {
     handleEmptyGameTouch(x, y);
   } else if (appState == STATE_MENU) {
@@ -6905,6 +8338,7 @@ void setup() {
   loadScore();
   loadRpsScore();
   loadPocketTanksScore();
+  loadRanchRushScore();
   loadNetworkSettings();
   clearBoard();
   WiFi.mode(WIFI_OFF);
@@ -6955,6 +8389,7 @@ void loop() {
   updateBreakoutGame();
   updatePongGame();
   updateSnakeGame();
+  updateRanchRushGame();
 
   delay(10);
 }
