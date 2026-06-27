@@ -1,6 +1,32 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 8.6 - 2026-06-19 07:21 - Switched Frogger Host/Join to use the standard
+// WiFi TCP flow (same as Tic Tac Toe) instead of ESP-NOW.  Both players run
+// traffic locally, exchange frog-state/goal/over messages over TCP, and the
+// FROG_STATE parsing is now symmetric so both host and join apply remote state.
+// Version 8.5 - 2026-06-18 14:50 - Reworked Frogger Host/Join to use the
+// attached ESP-NOW peer-to-peer concept with local frog simulation, HELLO/ACK/
+// START pairing, and compact frog, goal, and game-over packets.
+// Version 8.4 - 2026-06-18 14:34 - Reworked Frogger network gameplay using the
+// attached local-simulation model: each console moves its own frog and exchanges
+// compact frog states over the existing TCP link.
+// Version 8.3 - 2026-06-18 14:14 - Reverted Frogger JOIN local lane animation
+// changes after they broke second-console gameplay.
+// Version 8.2 - 2026-06-18 14:08 - Prevented Frogger JOIN lane position jumps
+// by using remote lane coordinates only during full redraw synchronization.
+// Version 8.1 - 2026-06-18 14:06 - Reduced Frogger JOIN flicker by animating
+// lanes locally and using remote states only for sync plus player redraws.
+// Version 8.0 - 2026-06-18 13:51 - Reduced Frogger network state backlog and
+// added input sequence tracking so P2 movement is not overwritten by old states.
+// Version 7.9 - 2026-06-18 13:34 - Fixed Frogger network controls by forcing
+// P1/P2 player roles, immediate network respawn, and lighter remote input redraws.
+// Version 7.8 - 2026-06-18 13:28 - Fixed Frogger network movement feedback by
+// redrawing player inputs immediately and moving the first road car off-center.
+// Version 7.7 - 2026-06-18 13:22 - Fixed the Frogger network compile error by
+// declaring sendFroggerState before updateFroggerGame uses it.
+// Version 7.6 - 2026-06-18 13:08 - Added host-authoritative Frogger network
+// gameplay with two visible colored players sharing the same lanes and logs.
 // Version 7.5 - 2026-06-18 12:29 - Added Frogger to the Games menu with a
 // dedicated mode menu and local playable road, river, logs, cars, goals, and
 // high score gameplay.
@@ -153,6 +179,9 @@
 #include <SD.h>
 #include <FS.h>
 #include <math.h>
+#include <string.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
 #include <esp_system.h>
 
 // ============================================================================
@@ -185,8 +214,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 7.5";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V75-2026061812";
+const char *APP_VERSION_TEXT = "Version 8.6";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V86-2026061907";
 
 
 
@@ -644,6 +673,7 @@ static const int FROG_W = 26;
 static const int FROG_H = 26;
 static const int FROG_STEP_X = 32;
 static const unsigned long FROG_FRAME_MS = 33;
+static const unsigned long FROG_NET_STATE_MS = 60;
 
 const int btnFrogMenuX = 230;
 const int btnFrogMenuY = 6;
@@ -682,6 +712,88 @@ bool frogGameOver = false;
 bool frogDying = false;
 unsigned long frogDeathTime = 0;
 unsigned long frogLastFrame = 0;
+float frogNetX[2] = {0.0f, 0.0f};
+float frogNetPrevX[2] = {0.0f, 0.0f};
+int frogNetRow[2] = {0, 0};
+int frogNetPrevRow[2] = {0, 0};
+bool frogNetAlive[2] = {true, true};
+bool frogNetDying[2] = {false, false};
+bool frogNetJustJumped[2] = {false, false};
+unsigned long frogNetDeathTime[2] = {0, 0};
+int frogNetScore[2] = {0, 0};
+int frogNetLives[2] = {3, 3};
+bool frogNetGameOver = false;
+int frogNetWinner = 0;
+bool frogNetSceneReady = false;
+unsigned long frogLastStateSendTime = 0;
+int frogNetInputSeq[2] = {0, 0};
+int frogLocalInputSeq = 0;
+
+// Frogger uses ESP-NOW for Host/Join because it needs fast symmetric movement:
+// each console simulates its own frog and only broadcasts compact events/state.
+static const uint8_t FROG_PKT_HELLO = 0;
+static const uint8_t FROG_PKT_ACK = 1;
+static const uint8_t FROG_PKT_START = 2;
+static const uint8_t FROG_PKT_STATE = 3;
+static const uint8_t FROG_PKT_GOAL = 4;
+static const uint8_t FROG_PKT_OVER = 5;
+static const int FROG_ESPNOW_CHANNEL = 1;
+static const int FROG_ESPNOW_RX_SIZE = 16;
+static const int FROG_ESPNOW_MAX_PACKET = 24;
+
+#pragma pack(push, 1)
+struct FrogEspNowHelloPacket {
+  uint8_t type;
+};
+
+struct FrogEspNowAckPacket {
+  uint8_t type;
+};
+
+struct FrogEspNowStartPacket {
+  uint8_t type;
+  uint8_t level;
+};
+
+struct FrogEspNowStatePacket {
+  uint8_t type;
+  uint8_t player;
+  float x;
+  uint8_t row;
+  int16_t score;
+  uint8_t lives;
+  uint8_t alive;
+};
+
+struct FrogEspNowGoalPacket {
+  uint8_t type;
+  uint8_t slot;
+  uint8_t player;
+};
+
+struct FrogEspNowOverPacket {
+  uint8_t type;
+  uint8_t winner;
+  int16_t score0;
+  int16_t score1;
+};
+#pragma pack(pop)
+
+struct FrogEspNowRxEntry {
+  uint8_t data[FROG_ESPNOW_MAX_PACKET];
+  uint8_t mac[6];
+  int len;
+};
+
+volatile int frogEspRxHead = 0;
+volatile int frogEspRxTail = 0;
+FrogEspNowRxEntry frogEspRxBuffer[FROG_ESPNOW_RX_SIZE];
+uint8_t frogEspPeerMac[6] = {0, 0, 0, 0, 0, 0};
+uint8_t frogEspBroadcastMac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+bool frogEspReady = false;
+bool frogEspPeerKnown = false;
+unsigned long frogEspLastHelloTime = 0;
+unsigned long frogEspLastPeerRxTime = 0;
 
 // Touch edge detection and debounce. Touch actions fire once per press, not on
 // every loop while the finger is still down.
@@ -5972,7 +6084,7 @@ void initFroggerLanes() {
   frogLanes[0].objColor = rgb888to565(230, 200, 0);
   frogLanes[0].numObj = 3;
   frogLanes[0].objs[0] = {30.0f, 40};
-  frogLanes[0].objs[1] = {150.0f, 40};
+  frogLanes[0].objs[1] = {190.0f, 40};
   frogLanes[0].objs[2] = {280.0f, 40};
 
   frogLanes[1].row = 2;
@@ -6146,11 +6258,11 @@ void drawFroggerObstacle(const FroggerLane &lane, int index) {
   }
 }
 
-void drawFroggerFrog(float xFloat, int row) {
+void drawFroggerFrogWithColors(float xFloat, int row, uint16_t frog, uint16_t darkFrog) {
+  if (row < 0 || row >= FROG_ROWS) return;
+
   int x = (int)xFloat;
   int y = frogRowY[row] + (FROG_LANE_H - FROG_H) / 2;
-  uint16_t frog = rgb888to565(40, 200, 40);
-  uint16_t darkFrog = rgb888to565(0, 130, 0);
 
   gfx->fillRect(x - 3, y + 17, 7, 9, darkFrog);
   gfx->fillRect(x + FROG_W - 4, y + 17, 7, 9, darkFrog);
@@ -6169,7 +6281,26 @@ void drawFroggerFrog(float xFloat, int row) {
   gfx->drawPixel(x + FROG_W / 2 + 1, y + 6, darkFrog);
 }
 
+void drawFroggerFrog(float xFloat, int row) {
+  drawFroggerFrogWithColors(xFloat, row, rgb888to565(40, 200, 40), rgb888to565(0, 130, 0));
+}
+
+void drawFroggerNetworkFrog(int playerIndex) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+  if (!frogNetAlive[playerIndex] || frogNetDying[playerIndex]) return;
+
+  if (playerIndex == 0) {
+    drawFroggerFrogWithColors(frogNetX[playerIndex], frogNetRow[playerIndex],
+                              rgb888to565(40, 220, 50), rgb888to565(0, 130, 0));
+  } else {
+    drawFroggerFrogWithColors(frogNetX[playerIndex], frogNetRow[playerIndex],
+                              rgb888to565(0, 220, 255), rgb888to565(0, 90, 170));
+  }
+}
+
 void clearFroggerFrog(float xFloat, int row) {
+  if (row < 0 || row >= FROG_ROWS) return;
+
   int x = (int)xFloat;
   int y = frogRowY[row] + (FROG_LANE_H - FROG_H) / 2;
   gfx->fillRect(x - 6, y - 3, FROG_W + 12, FROG_H + 6, froggerRowBg(row));
@@ -6240,14 +6371,28 @@ void drawFroggerHud() {
 
   gfx->setTextSize(1);
   gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(8, 28);
-  gfx->print("Score:");
-  gfx->setCursor(108, 28);
-  gfx->print("Lives:");
-  gfx->setCursor(176, 28);
-  gfx->print("Lv:");
-  gfx->setCursor(214, 28);
-  gfx->print("Hi:");
+
+  if (!localGame && activeNetworkGame == NETWORK_GAME_FROGGER) {
+    gfx->setCursor(8, 28);
+    gfx->print("P1:");
+    gfx->setCursor(78, 28);
+    gfx->print("L:");
+    gfx->setCursor(114, 28);
+    gfx->print("P2:");
+    gfx->setCursor(184, 28);
+    gfx->print("L:");
+    gfx->setCursor(224, 28);
+    gfx->print("Lv:");
+  } else {
+    gfx->setCursor(8, 28);
+    gfx->print("Score:");
+    gfx->setCursor(108, 28);
+    gfx->print("Lives:");
+    gfx->setCursor(176, 28);
+    gfx->print("Lv:");
+    gfx->setCursor(214, 28);
+    gfx->print("Hi:");
+  }
 
   drawButton(btnFrogMenuX, btnFrogMenuY, btnFrogMenuW, btnFrogMenuH,
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 1);
@@ -6257,6 +6402,35 @@ void drawFroggerHudValues() {
   uint16_t hudBg = rgb888to565(0, 0, 40);
 
   gfx->setTextSize(1);
+
+  if (!localGame && activeNetworkGame == NETWORK_GAME_FROGGER) {
+    gfx->fillRect(28, 26, 46, 12, hudBg);
+    gfx->setTextColor(RGB565_GREEN);
+    gfx->setCursor(28, 28);
+    gfx->print(frogNetScore[0]);
+
+    gfx->fillRect(90, 26, 18, 12, hudBg);
+    gfx->setTextColor(frogNetLives[0] <= 1 ? RGB565_RED : RGB565_GREEN);
+    gfx->setCursor(90, 28);
+    gfx->print(frogNetLives[0]);
+
+    gfx->fillRect(134, 26, 46, 12, hudBg);
+    gfx->setTextColor(RGB565_CYAN);
+    gfx->setCursor(134, 28);
+    gfx->print(frogNetScore[1]);
+
+    gfx->fillRect(196, 26, 18, 12, hudBg);
+    gfx->setTextColor(frogNetLives[1] <= 1 ? RGB565_RED : RGB565_CYAN);
+    gfx->setCursor(196, 28);
+    gfx->print(frogNetLives[1]);
+
+    gfx->fillRect(246, 26, 28, 12, hudBg);
+    gfx->setTextColor(rgb888to565(255, 160, 0));
+    gfx->setCursor(246, 28);
+    gfx->print(frogLevel);
+    return;
+  }
+
   gfx->fillRect(48, 26, 52, 12, hudBg);
   gfx->setTextColor(RGB565_YELLOW);
   gfx->setCursor(48, 28);
@@ -6344,9 +6518,20 @@ void drawFroggerFullScene() {
     }
   }
 
-  drawFroggerFrog(frogX, frogRow);
-  frogPrevX = frogX;
-  frogPrevRow = frogRow;
+  if (!localGame && activeNetworkGame == NETWORK_GAME_FROGGER) {
+    for (int p = 0; p < 2; p++) {
+      drawFroggerNetworkFrog(p);
+      frogNetPrevX[p] = frogNetX[p];
+      frogNetPrevRow[p] = frogNetRow[p];
+    }
+
+    frogNetSceneReady = true;
+  } else {
+    drawFroggerFrog(frogX, frogRow);
+    frogPrevX = frogX;
+    frogPrevRow = frogRow;
+  }
+
   drawFroggerControls();
 }
 
@@ -6392,6 +6577,30 @@ void froggerDie() {
 }
 
 void drawFroggerGameOverOverlay() {
+  if (!localGame && activeNetworkGame == NETWORK_GAME_FROGGER) {
+    gfx->fillRoundRect(28, 122, 264, 230, 10, rgb888to565(0, 0, 40));
+    gfx->drawRoundRect(28, 122, 264, 230, 10, RGB565_RED);
+    gfx->drawRoundRect(34, 128, 252, 218, 8, RGB565_CYAN);
+
+    int localPlayer = (myPlayer == '2') ? 2 : 1;
+
+    if (frogNetWinner == 3) {
+      drawCenteredText("DRAW", 154, 3, RGB565_YELLOW);
+    } else if (frogNetWinner == localPlayer) {
+      drawCenteredText("YOU WIN", 154, 3, RGB565_GREEN);
+    } else {
+      drawCenteredText("YOU LOSE", 154, 3, RGB565_RED);
+    }
+
+    char line[48];
+    snprintf(line, sizeof(line), "P1:%d  P2:%d", frogNetScore[0], frogNetScore[1]);
+    drawCenteredText(line, 220, 2, RGB565_WHITE);
+    snprintf(line, sizeof(line), "Level: %d", frogLevel);
+    drawCenteredText(line, 252, 2, RGB565_YELLOW);
+    drawCenteredText("Tap to restart", 292, 1, RGB565_CYAN);
+    return;
+  }
+
   if ((uint32_t)frogScore >= frogHiScore) {
     frogHiScore = frogScore;
     saveFroggerScore();
@@ -6519,7 +6728,10 @@ void checkFroggerCollisions() {
       return;
     }
 
-    if (!landed) return;
+    if (!landed) {
+      frogJustJumped = false;
+      return;
+    }
 
     bool allFilled = true;
     for (int goal = 0; goal < FROG_GOALS; goal++) {
@@ -6630,8 +6842,42 @@ void drawFroggerGameFrame() {
   drawFroggerHudValues();
 }
 
+void sendFroggerState(bool force);
+void sendFroggerGoalClaim(int slot);
+void sendFroggerGameOver();
+void sendFroggerEspNowStart();
+void processFroggerEspNow();
+void updateFroggerEspNowNetwork();
+void stopFroggerEspNow();
+void finishFroggerNetworkGame();
+void newFroggerNetworkGame();
+void redrawFroggerNetworkPlayersOnly();
+
 void updateFroggerGame() {
   if (appState != STATE_FROGGER_PLAYING) return;
+
+  if (!localGame) {
+    processFroggerEspNow();
+
+    if (frogNetGameOver) {
+      return;
+    }
+
+    unsigned long now = millis();
+
+    if (now - frogLastFrame < FROG_FRAME_MS) return;
+    frogLastFrame = now;
+
+    checkFroggerNetworkPlayerCollisions(froggerLocalNetworkPlayerIndex());
+
+    if (frogNetGameOver) {
+      return;
+    }
+
+    drawFroggerNetworkGameFrame();
+    sendFroggerState(false);
+    return;
+  }
 
   if (frogDying) {
     handleFroggerDying();
@@ -6691,6 +6937,851 @@ void moveFroggerFrog(int action) {
   }
 }
 
+int froggerLocalNetworkPlayerIndex() {
+  return (myPlayer == '2') ? 1 : 0;
+}
+
+int froggerGoalMask() {
+  int mask = 0;
+
+  for (int goal = 0; goal < FROG_GOALS; goal++) {
+    if (frogGoalFilled[goal]) {
+      mask |= (1 << goal);
+    }
+  }
+
+  return mask;
+}
+
+void setFroggerGoalMask(int mask) {
+  for (int goal = 0; goal < FROG_GOALS; goal++) {
+    frogGoalFilled[goal] = ((mask & (1 << goal)) != 0);
+  }
+}
+
+void onFroggerEspNowRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  if (!info || !data || len <= 0) return;
+
+  int next = (frogEspRxHead + 1) % FROG_ESPNOW_RX_SIZE;
+  if (next == frogEspRxTail) return;
+
+  int copyLen = (len > FROG_ESPNOW_MAX_PACKET) ? FROG_ESPNOW_MAX_PACKET : len;
+  memcpy(frogEspRxBuffer[frogEspRxHead].data, data, copyLen);
+  memcpy(frogEspRxBuffer[frogEspRxHead].mac, info->src_addr, 6);
+  frogEspRxBuffer[frogEspRxHead].len = copyLen;
+  frogEspRxHead = next;
+}
+
+void onFroggerEspNowSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
+  (void)info;
+  (void)status;
+}
+
+bool froggerEspNowReceive(uint8_t *data, int maxLen, uint8_t *mac, int &lenOut) {
+  if (frogEspRxTail == frogEspRxHead) return false;
+
+  int copyLen = frogEspRxBuffer[frogEspRxTail].len;
+  if (copyLen > maxLen) {
+    copyLen = maxLen;
+  }
+
+  memcpy(data, frogEspRxBuffer[frogEspRxTail].data, copyLen);
+  if (mac) {
+    memcpy(mac, frogEspRxBuffer[frogEspRxTail].mac, 6);
+  }
+
+  frogEspRxTail = (frogEspRxTail + 1) % FROG_ESPNOW_RX_SIZE;
+  lenOut = copyLen;
+  return true;
+}
+
+void froggerEspNowAddPeer(const uint8_t *mac) {
+  if (!frogEspReady || !mac) return;
+
+  memcpy(frogEspPeerMac, mac, 6);
+  frogEspPeerKnown = true;
+
+  if (esp_now_is_peer_exist(mac)) return;
+
+  esp_now_peer_info_t peerInfo;
+  memset(&peerInfo, 0, sizeof(peerInfo));
+  memcpy(peerInfo.peer_addr, mac, 6);
+  peerInfo.channel = FROG_ESPNOW_CHANNEL;
+  peerInfo.encrypt = false;
+
+  esp_now_add_peer(&peerInfo);
+}
+
+bool froggerEspNowSend(const void *packet, int len) {
+  if (!frogEspReady || !frogEspPeerKnown || !packet || len <= 0) return false;
+  return esp_now_send(frogEspPeerMac, (const uint8_t *)packet, len) == ESP_OK;
+}
+
+bool froggerEspNowBroadcast(const void *packet, int len) {
+  if (!frogEspReady || !packet || len <= 0) return false;
+  return esp_now_send(frogEspBroadcastMac, (const uint8_t *)packet, len) == ESP_OK;
+}
+
+bool initFroggerEspNow() {
+  frogEspReady = false;
+  frogEspPeerKnown = false;
+  frogEspRxHead = 0;
+  frogEspRxTail = 0;
+  frogEspLastHelloTime = 0;
+  frogEspLastPeerRxTime = 0;
+
+  esp_now_deinit();
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(20);
+  esp_wifi_set_channel(FROG_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_ps(WIFI_PS_NONE);
+
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("Frogger ESP-NOW init failed");
+    return false;
+  }
+
+  esp_now_register_recv_cb(onFroggerEspNowRecv);
+  esp_now_register_send_cb(onFroggerEspNowSent);
+
+  esp_now_peer_info_t peerInfo;
+  memset(&peerInfo, 0, sizeof(peerInfo));
+  memcpy(peerInfo.peer_addr, frogEspBroadcastMac, 6);
+  peerInfo.channel = FROG_ESPNOW_CHANNEL;
+  peerInfo.encrypt = false;
+  esp_now_add_peer(&peerInfo);
+
+  frogEspReady = true;
+  Serial.println("Frogger ESP-NOW ready");
+  return true;
+}
+
+void stopFroggerEspNow() {
+  if (frogEspReady || frogEspPeerKnown) {
+    esp_now_deinit();
+  }
+
+  frogEspReady = false;
+  frogEspPeerKnown = false;
+  frogEspRxHead = 0;
+  frogEspRxTail = 0;
+}
+
+void sendFroggerEspNowHello() {
+  FrogEspNowHelloPacket packet;
+  packet.type = FROG_PKT_HELLO;
+  froggerEspNowBroadcast(&packet, sizeof(packet));
+}
+
+void sendFroggerEspNowAck() {
+  FrogEspNowAckPacket packet;
+  packet.type = FROG_PKT_ACK;
+  froggerEspNowSend(&packet, sizeof(packet));
+}
+
+void sendFroggerEspNowStart() {
+  FrogEspNowStartPacket packet;
+  packet.type = FROG_PKT_START;
+  packet.level = (uint8_t)constrain(frogLevel, 1, 99);
+  froggerEspNowSend(&packet, sizeof(packet));
+}
+
+void resetFroggerNetworkPlayer(int playerIndex) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+
+  frogNetX[playerIndex] = (float)((screenW - FROG_W) / 2);
+  frogNetRow[playerIndex] = 0;
+  frogNetAlive[playerIndex] = true;
+  frogNetDying[playerIndex] = false;
+  frogNetJustJumped[playerIndex] = false;
+  frogNetDeathTime[playerIndex] = 0;
+}
+
+void resetFroggerNetworkPlayers() {
+  resetFroggerNetworkPlayer(0);
+  resetFroggerNetworkPlayer(1);
+}
+
+void froggerNetworkDie(int playerIndex) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+  if (!frogNetAlive[playerIndex] || frogNetGameOver) return;
+
+  frogNetLives[playerIndex]--;
+  tone(PIN_BUZZER, 180, 120);
+
+  if (frogNetLives[playerIndex] <= 0) {
+    frogNetLives[playerIndex] = 0;
+    frogNetAlive[playerIndex] = false;
+    frogNetDying[playerIndex] = false;
+    finishFroggerNetworkGame();
+    return;
+  }
+
+  resetFroggerNetworkPlayer(playerIndex);
+}
+
+void finishFroggerNetworkGame() {
+  if (frogNetGameOver) return;
+
+  frogNetGameOver = true;
+
+  if (frogNetLives[0] <= 0 && frogNetLives[1] <= 0) {
+    frogNetWinner = 3;
+  } else if (frogNetLives[0] <= 0) {
+    frogNetWinner = 2;
+  } else if (frogNetLives[1] <= 0) {
+    frogNetWinner = 1;
+  } else {
+    frogNetWinner = 3;
+  }
+
+  myTurn = false;
+  drawFroggerFullScene();
+  drawFroggerGameOverOverlay();
+  sendFroggerGameOver();
+  sendFroggerState(true);
+}
+
+void handleFroggerNetworkDying() {
+  if (frogNetGameOver) return;
+
+  bool changed = false;
+
+  for (int p = 0; p < 2; p++) {
+    if (!frogNetDying[p]) continue;
+    if (millis() - frogNetDeathTime[p] < 800) continue;
+
+    frogNetLives[p]--;
+    changed = true;
+
+    if (frogNetLives[p] <= 0) {
+      frogNetDying[p] = false;
+      frogNetAlive[p] = false;
+      continue;
+    }
+
+    resetFroggerNetworkPlayer(p);
+  }
+
+  if (frogNetLives[0] <= 0 || frogNetLives[1] <= 0) {
+    finishFroggerNetworkGame();
+    return;
+  }
+
+  if (changed) {
+    drawFroggerFullScene();
+  }
+}
+
+void checkFroggerNetworkPlayerCollisions(int playerIndex) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+  if (!frogNetAlive[playerIndex] || frogNetDying[playerIndex] || frogNetGameOver) return;
+
+  int row = frogNetRow[playerIndex];
+
+  if (row >= 1 && row <= 3) {
+    int laneIndex = froggerLaneIndexForRow(row);
+
+    if (laneIndex >= 0) {
+      for (int i = 0; i < frogLanes[laneIndex].numObj; i++) {
+        float ox = frogLanes[laneIndex].objs[i].x;
+        int ow = frogLanes[laneIndex].objs[i].w;
+
+        if (frogNetX[playerIndex] + FROG_W - 4 > ox && frogNetX[playerIndex] + 4 < ox + ow) {
+          froggerNetworkDie(playerIndex);
+          return;
+        }
+      }
+    }
+  }
+
+  if (row >= 5 && row <= 7) {
+    bool onLog = false;
+    int laneIndex = froggerLaneIndexForRow(row);
+
+    if (laneIndex >= 0) {
+      for (int i = 0; i < frogLanes[laneIndex].numObj; i++) {
+        float ox = frogLanes[laneIndex].objs[i].x;
+        int ow = frogLanes[laneIndex].objs[i].w;
+        float frogCenter = frogNetX[playerIndex] + FROG_W / 2.0f;
+
+        if (frogCenter > ox + 4 && frogCenter < ox + ow - 4) {
+          onLog = true;
+          frogNetX[playerIndex] += frogLanes[laneIndex].speed;
+          break;
+        }
+      }
+    }
+
+    if (!onLog && !frogNetJustJumped[playerIndex]) {
+      froggerNetworkDie(playerIndex);
+      return;
+    }
+
+    if (frogNetX[playerIndex] + FROG_W < -5 || frogNetX[playerIndex] > screenW + 5) {
+      froggerNetworkDie(playerIndex);
+      return;
+    }
+
+    frogNetX[playerIndex] = constrain(frogNetX[playerIndex], -2.0f, (float)(screenW - FROG_W + 2));
+  }
+
+  if (row == FROG_ROWS - 1) {
+    float frogCenter = frogNetX[playerIndex] + FROG_W / 2.0f;
+    bool landed = false;
+
+    for (int goal = 0; goal < FROG_GOALS; goal++) {
+      if (!frogGoalFilled[goal] && fabs(frogCenter - frogGoalX[goal]) < 30.0f) {
+        frogGoalFilled[goal] = true;
+        frogNetScore[playerIndex] += 50;
+        landed = true;
+        sendFroggerGoalClaim(goal);
+        tone(PIN_BUZZER, 1400, 60);
+        break;
+      }
+    }
+
+    if (!landed && !frogNetJustJumped[playerIndex]) {
+      froggerNetworkDie(playerIndex);
+      return;
+    }
+
+    if (!landed) {
+      frogNetJustJumped[playerIndex] = false;
+      return;
+    }
+
+    bool allFilled = true;
+    for (int goal = 0; goal < FROG_GOALS; goal++) {
+      if (!frogGoalFilled[goal]) {
+        allFilled = false;
+        break;
+      }
+    }
+
+    if (allFilled) {
+      frogLevel++;
+      frogNetScore[playerIndex] += 100;
+
+      for (int goal = 0; goal < FROG_GOALS; goal++) {
+        frogGoalFilled[goal] = false;
+      }
+
+      initFroggerLanes();
+      resetFroggerNetworkPlayers();
+      tone(PIN_BUZZER, 1800, 80);
+      return;
+    }
+
+    resetFroggerNetworkPlayer(playerIndex);
+    frogNetScore[playerIndex] += 10;
+  }
+
+  frogNetJustJumped[playerIndex] = false;
+}
+
+void applyFroggerNetworkInput(int playerIndex, int action, bool localFeedback) {
+  if (playerIndex < 0 || playerIndex > 1) return;
+  if (frogNetDying[playerIndex] || frogNetGameOver) return;
+
+  bool moved = false;
+
+  if (action == 0) {
+    if (frogNetX[playerIndex] > 0) {
+      frogNetX[playerIndex] -= FROG_STEP_X;
+      moved = true;
+    }
+  } else if (action == 1) {
+    if (frogNetRow[playerIndex] < FROG_ROWS - 1) {
+      frogNetRow[playerIndex]++;
+      frogNetScore[playerIndex]++;
+      frogNetJustJumped[playerIndex] = true;
+      moved = true;
+    }
+  } else if (action == 2) {
+    if (frogNetRow[playerIndex] > 0) {
+      frogNetRow[playerIndex]--;
+      frogNetJustJumped[playerIndex] = true;
+      moved = true;
+    }
+  } else if (action == 3) {
+    if (frogNetX[playerIndex] < screenW - FROG_W) {
+      frogNetX[playerIndex] += FROG_STEP_X;
+      moved = true;
+    }
+  }
+
+  frogNetX[playerIndex] = constrain(frogNetX[playerIndex], 0.0f, (float)(screenW - FROG_W));
+
+  if (moved && localFeedback) {
+    tone(PIN_BUZZER, 800, 30);
+  }
+}
+
+void sendFroggerInput(int action) {
+  if (localGame || !networkConnected) return;
+
+  frogLocalInputSeq++;
+
+  String msg = "FROG_INPUT:";
+  msg += String(froggerLocalNetworkPlayerIndex());
+  msg += ",";
+  msg += String(action);
+  msg += ",";
+  msg += String(frogLocalInputSeq);
+  sendNetMessage(msg);
+}
+
+void applyFroggerPlayerAction(int action) {
+  if (localGame) {
+    moveFroggerFrog(action);
+    return;
+  }
+
+  if (!networkConnected && !frogEspReady) return;
+  if (frogNetGameOver) return;
+
+  int playerIndex = froggerLocalNetworkPlayerIndex();
+  frogLocalInputSeq++;
+  frogNetInputSeq[playerIndex] = frogLocalInputSeq;
+  applyFroggerNetworkInput(playerIndex, action, true);
+  checkFroggerNetworkPlayerCollisions(playerIndex);
+  redrawFroggerNetworkPlayersOnly();
+  sendFroggerState(true);
+
+}
+
+void drawFroggerNetworkGameFrame() {
+  if (frogNetSceneReady) {
+    for (int p = 0; p < 2; p++) {
+      clearFroggerFrog(frogNetPrevX[p], frogNetPrevRow[p]);
+    }
+  }
+
+  for (int lane = 0; lane < FROG_LANES; lane++) {
+    updateFroggerLane(lane);
+  }
+
+  for (int p = 0; p < 2; p++) {
+    drawFroggerNetworkFrog(p);
+    frogNetPrevX[p] = frogNetX[p];
+    frogNetPrevRow[p] = frogNetRow[p];
+  }
+
+  frogNetSceneReady = true;
+  drawFroggerHudValues();
+}
+
+void redrawFroggerNetworkPlayersOnly() {
+  if (!frogNetSceneReady) {
+    drawFroggerFullScene();
+    return;
+  }
+
+  for (int p = 0; p < 2; p++) {
+    clearFroggerFrog(frogNetPrevX[p], frogNetPrevRow[p]);
+  }
+
+  for (int p = 0; p < 2; p++) {
+    drawFroggerNetworkFrog(p);
+    frogNetPrevX[p] = frogNetX[p];
+    frogNetPrevRow[p] = frogNetRow[p];
+  }
+
+  drawFroggerHudValues();
+}
+
+void drawFroggerRemoteStateFrame(int oldObjX[FROG_LANES][FROG_MAX_OBJECTS]) {
+  if (frogNetSceneReady) {
+    for (int p = 0; p < 2; p++) {
+      clearFroggerFrog(frogNetPrevX[p], frogNetPrevRow[p]);
+    }
+  }
+
+  for (int lane = 0; lane < FROG_LANES; lane++) {
+    int row = frogLanes[lane].row;
+    int y = frogRowY[row];
+
+    for (int obj = 0; obj < frogLanes[lane].numObj; obj++) {
+      int w = frogLanes[lane].objs[obj].w;
+      int oldX = oldObjX[lane][obj];
+      int newX = (int)frogLanes[lane].objs[obj].x;
+      int clearX = max(0, min(oldX, newX) - 3);
+      int clearEnd = min(screenW, max(oldX + w, newX + w) + 3);
+
+      if (clearEnd > clearX) {
+        gfx->fillRect(clearX, y, clearEnd - clearX, FROG_LANE_H, froggerRowBg(row));
+      }
+
+      drawFroggerObstacle(frogLanes[lane], obj);
+    }
+  }
+
+  for (int p = 0; p < 2; p++) {
+    drawFroggerNetworkFrog(p);
+    frogNetPrevX[p] = frogNetX[p];
+    frogNetPrevRow[p] = frogNetRow[p];
+  }
+
+  frogNetSceneReady = true;
+  drawFroggerHudValues();
+}
+
+void sendFroggerState(bool force) {
+  if (localGame) return;
+
+  bool useEspNow = frogEspReady;
+  if (useEspNow && !frogEspPeerKnown) return;
+  if (!useEspNow && !networkConnected) return;
+
+  unsigned long now = millis();
+
+  if (!force && now - frogLastStateSendTime < FROG_NET_STATE_MS) {
+    return;
+  }
+
+  frogLastStateSendTime = now;
+
+  int playerIndex = froggerLocalNetworkPlayerIndex();
+
+  if (useEspNow) {
+    FrogEspNowStatePacket packet;
+    packet.type = FROG_PKT_STATE;
+    packet.player = (uint8_t)(playerIndex + 1);
+    packet.x = frogNetX[playerIndex];
+    packet.row = (uint8_t)constrain(frogNetRow[playerIndex], 0, FROG_ROWS - 1);
+    packet.score = (int16_t)constrain(frogNetScore[playerIndex], -32768, 32767);
+    packet.lives = (uint8_t)constrain(frogNetLives[playerIndex], 0, 255);
+    packet.alive = (frogNetAlive[playerIndex] && !frogNetDying[playerIndex]) ? 1 : 0;
+    froggerEspNowSend(&packet, sizeof(packet));
+    return;
+  }
+
+  String msg = "FROG_STATE:";
+  msg.reserve(96);
+
+  msg += String(playerIndex);
+  msg += ",";
+  msg += String(frogNetGameOver ? 1 : 0);
+  msg += ",";
+  msg += String(frogNetWinner);
+  msg += ",";
+  msg += String(frogLevel);
+  msg += ",";
+  msg += String(froggerGoalMask());
+  msg += ",";
+  msg += String(frogNetScore[playerIndex]);
+  msg += ",";
+  msg += String(frogNetLives[playerIndex]);
+  msg += ",";
+  msg += String((int)frogNetX[playerIndex]);
+  msg += ",";
+  msg += String(frogNetRow[playerIndex]);
+  msg += ",";
+  msg += String(frogNetAlive[playerIndex] ? 1 : 0);
+  msg += ",";
+  msg += String(frogNetDying[playerIndex] ? 1 : 0);
+  msg += ",";
+  msg += String(frogNetInputSeq[playerIndex]);
+
+  sendNetMessage(msg);
+}
+
+void sendFroggerGoalClaim(int slot) {
+  if (localGame) return;
+  if (slot < 0 || slot >= FROG_GOALS) return;
+
+  if (frogEspReady && frogEspPeerKnown) {
+    FrogEspNowGoalPacket packet;
+    packet.type = FROG_PKT_GOAL;
+    packet.slot = (uint8_t)slot;
+    packet.player = (uint8_t)(froggerLocalNetworkPlayerIndex() + 1);
+    froggerEspNowSend(&packet, sizeof(packet));
+    return;
+  }
+
+  if (networkConnected) {
+    String msg = "FROG_GOAL:";
+    msg += String(slot);
+    msg += ",";
+    msg += String(froggerLocalNetworkPlayerIndex() + 1);
+    sendNetMessage(msg);
+  }
+}
+
+void sendFroggerGameOver() {
+  if (localGame) return;
+
+  if (frogEspReady && frogEspPeerKnown) {
+    FrogEspNowOverPacket packet;
+    packet.type = FROG_PKT_OVER;
+    packet.winner = (uint8_t)constrain(frogNetWinner, 0, 3);
+    packet.score0 = (int16_t)constrain(frogNetScore[0], -32768, 32767);
+    packet.score1 = (int16_t)constrain(frogNetScore[1], -32768, 32767);
+    froggerEspNowSend(&packet, sizeof(packet));
+    return;
+  }
+
+  if (networkConnected) {
+    String msg = "FROG_OVER:";
+    msg += String(frogNetWinner);
+    msg += ",";
+    msg += String(frogNetScore[0]);
+    msg += ",";
+    msg += String(frogNetScore[1]);
+    sendNetMessage(msg);
+  }
+}
+
+void applyRemoteFroggerState(const String &payload) {
+  activeNetworkGame = NETWORK_GAME_FROGGER;
+  localGame = false;
+  appState = STATE_FROGGER_PLAYING;
+
+  int start = 0;
+  int playerIndex, gameOverValue, winnerValue, levelValue, goalMaskValue;
+  int scoreValue, livesValue, xValue, rowValue, aliveValue, dyingValue, seqValue;
+
+  if (!readCsvInt(payload, start, playerIndex)) return;
+  if (!readCsvInt(payload, start, gameOverValue)) return;
+  if (!readCsvInt(payload, start, winnerValue)) return;
+  if (!readCsvInt(payload, start, levelValue)) return;
+  if (!readCsvInt(payload, start, goalMaskValue)) return;
+  if (!readCsvInt(payload, start, scoreValue)) return;
+  if (!readCsvInt(payload, start, livesValue)) return;
+  if (!readCsvInt(payload, start, xValue)) return;
+  if (!readCsvInt(payload, start, rowValue)) return;
+  if (!readCsvInt(payload, start, aliveValue)) return;
+  if (!readCsvInt(payload, start, dyingValue)) return;
+  if (!readCsvInt(payload, start, seqValue)) return;
+
+  if (playerIndex < 0 || playerIndex > 1) return;
+  if (playerIndex == froggerLocalNetworkPlayerIndex()) return;
+
+  bool wasGameOver = frogNetGameOver;
+  int oldLevel = frogLevel;
+  int oldGoalMask = froggerGoalMask();
+  int mergedGoalMask = (levelValue == oldLevel) ? (goalMaskValue | oldGoalMask) : goalMaskValue;
+
+  frogNetGameOver = frogNetGameOver || (gameOverValue != 0);
+  if (winnerValue != 0) {
+    frogNetWinner = winnerValue;
+  }
+
+  frogLevel = constrain(levelValue, 1, 99);
+  if (oldLevel != frogLevel) {
+    initFroggerLanes();
+  }
+
+  setFroggerGoalMask(mergedGoalMask);
+
+  frogNetScore[playerIndex] = scoreValue;
+  frogNetLives[playerIndex] = livesValue;
+  frogNetX[playerIndex] = (float)constrain(xValue, -8, screenW + 8);
+  frogNetRow[playerIndex] = constrain(rowValue, 0, FROG_ROWS - 1);
+  frogNetAlive[playerIndex] = (aliveValue != 0);
+  frogNetDying[playerIndex] = (dyingValue != 0);
+  frogNetInputSeq[playerIndex] = seqValue;
+
+  if (!frogNetSceneReady || oldLevel != frogLevel || (!wasGameOver && frogNetGameOver)) {
+    drawFroggerFullScene();
+  } else {
+    if (oldGoalMask != froggerGoalMask()) {
+      drawFroggerGoalSlots();
+    }
+
+    redrawFroggerNetworkPlayersOnly();
+  }
+
+  if (frogNetGameOver) {
+    if (!wasGameOver) {
+      int localPlayer = (myPlayer == '2') ? 2 : 1;
+      if (frogNetWinner == localPlayer) {
+        beepWin();
+      } else {
+        beepDraw();
+      }
+    }
+
+    drawFroggerGameOverOverlay();
+  }
+}
+
+void newFroggerNetworkGame() {
+  activeNetworkGame = NETWORK_GAME_FROGGER;
+  localGame = false;
+  appState = STATE_FROGGER_PLAYING;
+  myTurn = true;
+  frogLevel = constrain(frogLevel, 1, 99);
+  frogNetScore[0] = 0;
+  frogNetScore[1] = 0;
+  frogNetLives[0] = 3;
+  frogNetLives[1] = 3;
+  frogNetGameOver = false;
+  frogNetWinner = 0;
+  frogNetInputSeq[0] = 0;
+  frogNetInputSeq[1] = 0;
+  frogLocalInputSeq = 0;
+
+  for (int goal = 0; goal < FROG_GOALS; goal++) {
+    frogGoalFilled[goal] = false;
+  }
+
+  initFroggerLayout();
+  initFroggerLanes();
+  resetFroggerNetworkPlayers();
+  frogLastFrame = millis();
+  frogLastStateSendTime = 0;
+  frogNetSceneReady = false;
+  drawFroggerFullScene();
+}
+
+void processFroggerEspNow() {
+  if (!frogEspReady) return;
+
+  uint8_t buffer[FROG_ESPNOW_MAX_PACKET];
+  uint8_t mac[6];
+  int len = 0;
+
+  while (froggerEspNowReceive(buffer, sizeof(buffer), mac, len)) {
+    if (len < 1) continue;
+
+    uint8_t type = buffer[0];
+    frogEspLastPeerRxTime = millis();
+
+    bool waitingForPeer = (appState == STATE_WAITING_HOST || appState == STATE_CONNECTING_JOIN);
+
+    if (type == FROG_PKT_HELLO) {
+      froggerEspNowAddPeer(mac);
+
+      if (isHost) {
+        if (waitingForPeer) {
+          frogLevel = 1;
+        }
+
+        sendFroggerEspNowAck();
+        sendFroggerEspNowStart();
+
+        if (waitingForPeer) {
+          newFroggerNetworkGame();
+          sendFroggerState(true);
+        }
+      }
+
+      continue;
+    }
+
+    if (!isHost && type == FROG_PKT_ACK) {
+      froggerEspNowAddPeer(mac);
+
+      if (waitingForPeer) {
+        tone(PIN_BUZZER, 1200, 50);
+      }
+
+      continue;
+    }
+
+    if (type == FROG_PKT_START && len >= (int)sizeof(FrogEspNowStartPacket)) {
+      froggerEspNowAddPeer(mac);
+      FrogEspNowStartPacket *packet = (FrogEspNowStartPacket *)buffer;
+      frogLevel = constrain((int)packet->level, 1, 99);
+      newFroggerNetworkGame();
+      sendFroggerState(true);
+      continue;
+    }
+
+    if (type == FROG_PKT_STATE && len >= (int)sizeof(FrogEspNowStatePacket)) {
+      if (appState != STATE_FROGGER_PLAYING) continue;
+
+      FrogEspNowStatePacket *packet = (FrogEspNowStatePacket *)buffer;
+      int playerIndex = (int)packet->player - 1;
+
+      if (playerIndex < 0 || playerIndex > 1) continue;
+      if (playerIndex == froggerLocalNetworkPlayerIndex()) continue;
+
+      frogNetX[playerIndex] = constrain(packet->x, -8.0f, (float)(screenW + 8));
+      frogNetRow[playerIndex] = constrain((int)packet->row, 0, FROG_ROWS - 1);
+      frogNetScore[playerIndex] = packet->score;
+      frogNetLives[playerIndex] = packet->lives;
+      frogNetAlive[playerIndex] = (packet->alive != 0);
+      frogNetDying[playerIndex] = false;
+      continue;
+    }
+
+    if (type == FROG_PKT_GOAL && len >= (int)sizeof(FrogEspNowGoalPacket)) {
+      if (appState != STATE_FROGGER_PLAYING) continue;
+
+      FrogEspNowGoalPacket *packet = (FrogEspNowGoalPacket *)buffer;
+      int slot = packet->slot;
+
+      if (slot >= 0 && slot < FROG_GOALS && !frogGoalFilled[slot]) {
+        frogGoalFilled[slot] = true;
+
+        bool allFilled = true;
+        for (int goal = 0; goal < FROG_GOALS; goal++) {
+          if (!frogGoalFilled[goal]) {
+            allFilled = false;
+            break;
+          }
+        }
+
+        if (allFilled) {
+          frogLevel++;
+
+          for (int goal = 0; goal < FROG_GOALS; goal++) {
+            frogGoalFilled[goal] = false;
+          }
+
+          initFroggerLanes();
+          resetFroggerNetworkPlayers();
+          frogNetSceneReady = false;
+          drawFroggerFullScene();
+        } else {
+          drawFroggerGoalSlots();
+          redrawFroggerNetworkPlayersOnly();
+        }
+      }
+
+      continue;
+    }
+
+    if (type == FROG_PKT_OVER && len >= (int)sizeof(FrogEspNowOverPacket)) {
+      FrogEspNowOverPacket *packet = (FrogEspNowOverPacket *)buffer;
+
+      frogNetScore[0] = packet->score0;
+      frogNetScore[1] = packet->score1;
+      frogNetWinner = packet->winner;
+      frogNetGameOver = true;
+      myTurn = false;
+
+      if (appState == STATE_FROGGER_PLAYING) {
+        drawFroggerFullScene();
+        drawFroggerGameOverOverlay();
+      }
+
+      continue;
+    }
+  }
+}
+
+void updateFroggerEspNowNetwork() {
+  if (activeNetworkGame != NETWORK_GAME_FROGGER || !frogEspReady) return;
+
+  processFroggerEspNow();
+
+  if (appState != STATE_WAITING_HOST && appState != STATE_CONNECTING_JOIN) return;
+
+  unsigned long now = millis();
+  unsigned long helloInterval = isHost ? 500UL : 600UL;
+
+  if (now - frogEspLastHelloTime >= helloInterval) {
+    frogEspLastHelloTime = now;
+    sendFroggerEspNowHello();
+  }
+}
+
 void startFroggerLocalGame() {
   activeNetworkGame = NETWORK_GAME_FROGGER;
   stopNetwork();
@@ -6706,8 +7797,96 @@ void startFroggerLocalGame() {
 void startFroggerNetworkGame() {
   activeNetworkGame = NETWORK_GAME_FROGGER;
   localGame = false;
+  myTurn = true;
   beepStart();
-  drawFroggerPlaceholderScreen(isHost ? "FROG HOST" : "FROG JOIN");
+
+  if (isHost) {
+    myPlayer = '1';
+    frogLevel = 1;
+    newFroggerNetworkGame();
+    sendFroggerState(true);
+    return;
+  }
+
+  myPlayer = '2';
+  frogLevel = 1;
+  frogNetScore[0] = 0;
+  frogNetScore[1] = 0;
+  frogNetLives[0] = 3;
+  frogNetLives[1] = 3;
+  frogNetGameOver = false;
+  frogNetWinner = 0;
+  frogNetInputSeq[0] = 0;
+  frogNetInputSeq[1] = 0;
+  frogLocalInputSeq = 0;
+
+  for (int goal = 0; goal < FROG_GOALS; goal++) {
+    frogGoalFilled[goal] = false;
+  }
+
+  initFroggerLayout();
+  initFroggerLanes();
+  resetFroggerNetworkPlayers();
+  frogNetSceneReady = false;
+  appState = STATE_FROGGER_PLAYING;
+  drawFroggerFullScene();
+  drawCenteredText("Waiting host", 184, 2, RGB565_YELLOW);
+  frogNetSceneReady = false;
+}
+
+void drawFroggerEspNowWaitingScreen() {
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText(isHost ? "FROG HOST" : "FROG JOIN", 54, 3, isHost ? RGB565_GREEN : RGB565_BLUE);
+  drawCenteredText(isHost ? "Player 1" : "Player 2", 105, 2, RGB565_WHITE);
+  drawCenteredText("ESP-NOW", 165, 3, RGB565_CYAN);
+  drawCenteredText("Waiting peer...", 220, 2, RGB565_YELLOW);
+  drawCenteredText("No router needed", 252, 1, RGB565_WHITE);
+
+  if (!frogEspReady) {
+    drawCenteredText("ESP-NOW ERROR", 300, 2, RGB565_RED);
+  }
+
+  drawButton(btnMenuX, btnMenuY, btnMenuW, btnMenuH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENIU", 2);
+}
+
+void startFroggerHostEspNowMode() {
+  stopNetwork();
+
+  activeNetworkGame = NETWORK_GAME_FROGGER;
+  localGame = false;
+  isHost = true;
+  myPlayer = '1';
+  myTurn = true;
+  networkConnected = false;
+  frogLevel = 1;
+
+  initFroggerLayout();
+  initFroggerEspNow();
+
+  appState = STATE_WAITING_HOST;
+  beepStart();
+  drawFroggerEspNowWaitingScreen();
+}
+
+void startFroggerJoinEspNowMode() {
+  stopNetwork();
+
+  activeNetworkGame = NETWORK_GAME_FROGGER;
+  localGame = false;
+  isHost = false;
+  myPlayer = '2';
+  myTurn = true;
+  networkConnected = false;
+  frogLevel = 1;
+
+  initFroggerLayout();
+  initFroggerEspNow();
+
+  appState = STATE_CONNECTING_JOIN;
+  beepStart();
+  drawFroggerEspNowWaitingScreen();
 }
 
 void drawPocketTanksMenuScreen() {
@@ -7135,6 +8314,8 @@ void sendNetMessage(const String &msg) {
 }
 
 void stopNetwork() {
+  stopFroggerEspNow();
+
   if (netClient) {
     netClient.stop();
   }
@@ -7841,6 +9022,13 @@ void returnToMenu(bool notifyPeer) {
   // Returns to the current game's mode menu. notifyPeer is used when leaving a
   // live network game so the other device is not stranded.
   if (notifyPeer && !localGame) {
+    if (activeNetworkGame == NETWORK_GAME_FROGGER) {
+      if (!frogNetGameOver) {
+        frogNetWinner = (froggerLocalNetworkPlayerIndex() == 0) ? 2 : 1;
+        frogNetGameOver = true;
+      }
+      sendFroggerGameOver();
+    }
     sendNetMessage("LEAVE");
   }
 
@@ -7869,6 +9057,13 @@ void returnToMenu(bool notifyPeer) {
 
 void returnToHome(bool notifyPeer) {
   if (notifyPeer && !localGame) {
+    if (activeNetworkGame == NETWORK_GAME_FROGGER) {
+      if (!frogNetGameOver) {
+        frogNetWinner = (froggerLocalNetworkPlayerIndex() == 0) ? 2 : 1;
+        frogNetGameOver = true;
+      }
+      sendFroggerGameOver();
+    }
     sendNetMessage("LEAVE");
   }
 
@@ -7883,7 +9078,8 @@ void returnToHome(bool notifyPeer) {
 // ============================================================================
 // Text protocol over TCP. Messages are line-based and intentionally simple:
 // START:<game>, NEW:<game>, MOVE:col,row, RPS_CHOICE:n, PT_* messages,
-// PN_* messages, SN_* messages, RR_* messages, BR_LOSE, LEAVE.
+// PN_* messages, SN_* messages, RR_* messages, FROG_* messages, BR_LOSE,
+// LEAVE.
 void handleNetMessage(String msg) {
   msg.trim();
 
@@ -7983,6 +9179,86 @@ void handleNetMessage(String msg) {
       applyRemoteRanchRushState(msg.substring(9));
     }
 
+    return;
+  }
+
+  if (msg.startsWith("FROG_INPUT:")) {
+    activeNetworkGame = NETWORK_GAME_FROGGER;
+
+    if (isHost) {
+      int comma = msg.indexOf(',');
+      int secondComma = msg.indexOf(',', comma + 1);
+
+      if (comma > 11) {
+        int playerIndex = msg.substring(11, comma).toInt();
+        int action = (secondComma > comma) ? msg.substring(comma + 1, secondComma).toInt()
+                                           : msg.substring(comma + 1).toInt();
+        int seqValue = (secondComma > comma) ? msg.substring(secondComma + 1).toInt()
+                                             : (frogNetInputSeq[constrain(playerIndex, 0, 1)] + 1);
+
+        if (playerIndex >= 0 && playerIndex <= 1 && seqValue > frogNetInputSeq[playerIndex]) {
+          frogNetInputSeq[playerIndex] = seqValue;
+        }
+
+        applyFroggerNetworkInput(playerIndex, action, false);
+        checkFroggerNetworkPlayerCollisions(playerIndex);
+        redrawFroggerNetworkPlayersOnly();
+        sendFroggerState(true);
+      }
+    }
+
+    return;
+  }
+
+  if (msg.startsWith("FROG_STATE:")) {
+    activeNetworkGame = NETWORK_GAME_FROGGER;
+    applyRemoteFroggerState(msg.substring(11));
+    return;
+  }
+
+  if (msg.startsWith("FROG_GOAL:")) {
+    activeNetworkGame = NETWORK_GAME_FROGGER;
+    int comma = msg.indexOf(',', 10);
+    if (comma > 10) {
+      int slot = msg.substring(10, comma).toInt();
+      int player = msg.substring(comma + 1).toInt();
+      if (slot >= 0 && slot < FROG_GOALS && !frogGoalFilled[slot]) {
+        frogGoalFilled[slot] = true;
+        bool allFilled = true;
+        for (int g = 0; g < FROG_GOALS; g++) {
+          if (!frogGoalFilled[g]) { allFilled = false; break; }
+        }
+        if (allFilled) {
+          frogLevel++;
+          for (int g = 0; g < FROG_GOALS; g++) frogGoalFilled[g] = false;
+          initFroggerLanes();
+          resetFroggerNetworkPlayers();
+          frogNetSceneReady = false;
+          drawFroggerFullScene();
+        } else {
+          drawFroggerGoalSlots();
+          redrawFroggerNetworkPlayersOnly();
+        }
+      }
+    }
+    return;
+  }
+
+  if (msg.startsWith("FROG_OVER:")) {
+    activeNetworkGame = NETWORK_GAME_FROGGER;
+    int c1 = msg.indexOf(',', 10);
+    int c2 = (c1 > 10) ? msg.indexOf(',', c1 + 1) : -1;
+    if (c1 > 10 && c2 > c1) {
+      frogNetWinner = msg.substring(10, c1).toInt();
+      frogNetScore[0] = msg.substring(c1 + 1, c2).toInt();
+      frogNetScore[1] = msg.substring(c2 + 1).toInt();
+      frogNetGameOver = true;
+      myTurn = false;
+      if (appState == STATE_FROGGER_PLAYING) {
+        drawFroggerFullScene();
+        drawFroggerGameOverOverlay();
+      }
+    }
     return;
   }
 
@@ -8541,29 +9817,39 @@ void handleFroggerPlaceholderTouch(int x, int y) {
 void handleFroggerPlayingTouch(int x, int y) {
   if (inRect(x, y, btnFrogMenuX, btnFrogMenuY, btnFrogMenuW, btnFrogMenuH)) {
     beepClick();
-    drawFroggerMenuScreen();
+    if (localGame) {
+      drawFroggerMenuScreen();
+    } else {
+      returnToMenu(true);
+    }
     return;
   }
 
-  if (frogGameOver) {
-    startFroggerLocalGame();
+  if ((localGame && frogGameOver) || (!localGame && frogNetGameOver)) {
+    if (localGame) {
+      startFroggerLocalGame();
+    } else {
+      sendNetMessage(buildNetworkMessage("NEW"));
+      startNetworkGame();
+    }
+
     return;
   }
 
-  if (frogDying) return;
+  if (localGame && frogDying) return;
 
   if (y >= FROG_BTN_TOP) {
     int buttonW = 68;
     int gap = (screenW - 4 * buttonW) / 5;
 
     if (x < gap + buttonW) {
-      moveFroggerFrog(0);
+      applyFroggerPlayerAction(0);
     } else if (x < 2 * gap + 2 * buttonW) {
-      moveFroggerFrog(1);
+      applyFroggerPlayerAction(1);
     } else if (x < 3 * gap + 3 * buttonW) {
-      moveFroggerFrog(2);
+      applyFroggerPlayerAction(2);
     } else {
-      moveFroggerFrog(3);
+      applyFroggerPlayerAction(3);
     }
 
     return;
@@ -8576,9 +9862,9 @@ void handleFroggerPlayingTouch(int x, int y) {
     int dx = abs(x - fieldMidX);
 
     if (dy >= dx) {
-      moveFroggerFrog(y < fieldMidY ? 1 : 2);
+      applyFroggerPlayerAction(y < fieldMidY ? 1 : 2);
     } else {
-      moveFroggerFrog(x < fieldMidX ? 0 : 3);
+      applyFroggerPlayerAction(x < fieldMidX ? 0 : 3);
     }
   }
 }
@@ -9342,6 +10628,7 @@ void loop() {
   checkHostClient();
   checkJoinConnection();
   pollNetwork();
+  updateFroggerEspNowNetwork();
 
   int tx, ty;
   bool touched = readTouchScreen(tx, ty);
