@@ -203,16 +203,17 @@ The shared WiFi game protocol uses line-based TCP messages over port `3333`.
 Each game has a score reset option in its game menu. High score or score data is
 stored in ESP32 flash with separate `Preferences` namespaces per game.
 
-![Tic Tac Toe](Game_Consoles/Pics%26Videos/Games/0001_TicTacToe.jpeg)
-![RPSLS](Game_Consoles/Pics%26Videos/Games/0002_RPSLS.jpeg)
-![Tanks](Game_Consoles/Pics%26Videos/Games/0003_Tanks.jpeg)
-![Snake](Game_Consoles/Pics%26Videos/Games/0004_Snake.jpeg)
-![Breakout](Game_Consoles/Pics%26Videos/Games/0005_Breakout.jpeg)
-![Pong](Game_Consoles/Pics%26Videos/Games/0006_Pong.jpeg)
-![Ranch Rush](Game_Consoles/Pics%26Videos/Games/0007_RanchRush.jpeg)
-![Hex Pipes](Game_Consoles/Pics%26Videos/Games/0008_HexPipes.jpeg)
-![Frogger](Game_Consoles/Pics%26Videos/Games/0009_Frogger.jpeg)
-
+<p align="center">
+  <img src="Game_Consoles/Pics%26Videos/Games/0001_TicTacToe.jpeg" width="250">
+  <img src="Game_Consoles/Pics%26Videos/Games/0002_RPSLS.jpeg" width="250">
+  <img src="Game_Consoles/Pics%26Videos/Games/0003_Tanks.jpeg" width="250">
+  <img src="Game_Consoles/Pics%26Videos/Games/0004_Snake.jpeg" width="250">
+  <img src="Game_Consoles/Pics%26Videos/Games/0005_Breakout.jpeg" width="250">
+  <img src="Game_Consoles/Pics%26Videos/Games/0006_Pong.jpeg" width="250">
+  <img src="Game_Consoles/Pics%26Videos/Games/0007_RanchRush.jpeg" width="250">
+  <img src="Game_Consoles/Pics%26Videos/Games/0008_HexPipes.jpeg" width="250">
+  <img src="Game_Consoles/Pics%26Videos/Games/0009_Frogger.jpeg" width="250">
+</p>
 
 
 ## SD Card Assets
