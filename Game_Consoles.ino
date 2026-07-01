@@ -1,6 +1,9 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 9.5 - 2026-07-01 - Stabilized Tic Tac Toe network joining by
+// preferring configured or known Host SSIDs, throttling Join TCP retries, and
+// disabling WiFi sleep/TCP buffering during peer games.
 // Version 9.4 - 2026-07-01 - Expanded source block comments with game
 // ownership notes so each major code area explains its purpose.
 // Version 9.3 - 2026-07-01 - Removed the hour from every changelog entry and
@@ -235,8 +238,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 9.4";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V94-2026070120";
+const char *APP_VERSION_TEXT = "Version 9.5";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V95-2026070121";
 
 
 
@@ -417,6 +420,11 @@ String joinNetworks[MAX_JOIN_NETWORKS];
 int joinNetworkCount = 0;
 int selectedJoinNetwork = -1;
 int joinNetworkListOffset = 0;
+unsigned long joinWifiStartedAt = 0;
+unsigned long joinTcpLastAttempt = 0;
+int joinTcpAttemptCount = 0;
+static const unsigned long JOIN_TCP_RETRY_MS = 850;
+static const unsigned long JOIN_WIFI_RETRY_MS = 15000;
 
 // Editable IP fields shared by Settings, Host IP, and Join IP screens.
 uint8_t ipParts[4] = {192, 168, 10, 1};
@@ -9642,6 +9650,12 @@ void sendNetMessage(const String &msg) {
   }
 }
 
+void resetJoinConnectionRetryState() {
+  joinWifiStartedAt = 0;
+  joinTcpLastAttempt = 0;
+  joinTcpAttemptCount = 0;
+}
+
 void stopNetwork() {
   stopFroggerEspNow();
 
@@ -9657,6 +9671,7 @@ void stopNetwork() {
   isHost = false;
   myPlayer = ' ';
   myTurn = false;
+  resetJoinConnectionRetryState();
 }
 
 void scanJoinNetworks() {
@@ -9664,12 +9679,16 @@ void scanJoinNetworks() {
   joinNetworkCount = 0;
   selectedJoinNetwork = -1;
   joinNetworkListOffset = 0;
+  int preferredNetwork = -1;
+  int legacyNetwork = -1;
+  int epicNetwork = -1;
 
   for (int i = 0; i < MAX_JOIN_NETWORKS; i++) {
     joinNetworks[i] = "";
   }
 
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.disconnect();
   delay(100);
 
@@ -9693,14 +9712,29 @@ void scanJoinNetworks() {
 
     joinNetworks[joinNetworkCount] = ssid;
 
-    if (ssid == AP_SSID) {
-      selectedJoinNetwork = joinNetworkCount;
+    if (ssid == epicSSIDList[selectedHostSSIDIndex]) {
+      preferredNetwork = joinNetworkCount;
+    } else if (ssid == AP_SSID) {
+      legacyNetwork = joinNetworkCount;
+    } else if (epicNetwork < 0) {
+      for (int epicIndex = 0; epicIndex < EPIC_SSID_COUNT; epicIndex++) {
+        if (ssid == epicSSIDList[epicIndex]) {
+          epicNetwork = joinNetworkCount;
+          break;
+        }
+      }
     }
 
     joinNetworkCount++;
   }
 
-  if (selectedJoinNetwork < 0 && joinNetworkCount > 0) {
+  if (preferredNetwork >= 0) {
+    selectedJoinNetwork = preferredNetwork;
+  } else if (legacyNetwork >= 0) {
+    selectedJoinNetwork = legacyNetwork;
+  } else if (epicNetwork >= 0) {
+    selectedJoinNetwork = epicNetwork;
+  } else if (joinNetworkCount > 0) {
     selectedJoinNetwork = 0;
   }
 
@@ -9717,6 +9751,11 @@ void beginSelectedJoinConnection() {
   if (selectedJoinNetwork < 0 || selectedJoinNetwork >= joinNetworkCount) return;
 
   saveNetworkSettings();
+  resetJoinConnectionRetryState();
+
+  if (netClient) {
+    netClient.stop();
+  }
 
   localGame = false;
   isHost = false;
@@ -9728,6 +9767,10 @@ void beginSelectedJoinConnection() {
   drawConnectingJoinScreen();
 
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.disconnect();
+  delay(100);
+  joinWifiStartedAt = millis();
   WiFi.begin(joinNetworks[selectedJoinNetwork].c_str(), JOIN_WIFI_PASS);
 }
 
@@ -9750,6 +9793,7 @@ void beginHostNetwork() {
             activeNetworkGame == NETWORK_GAME_HEX_PIPES);
 
   WiFi.mode(WIFI_AP);
+  WiFi.setSleep(false);
   WiFi.softAPConfig(HOST_IP, HOST_IP, IPAddress(255, 255, 255, 0));
   WiFi.softAP(epicSSIDList[selectedHostSSIDIndex], AP_PASS);
 
@@ -9864,6 +9908,7 @@ void checkHostClient() {
   if (newClient) {
     netClient = newClient;
     netClient.setTimeout(10);
+    netClient.setNoDelay(true);
     networkConnected = true;
 
     if (activeNetworkGame == NETWORK_GAME_PT) {
@@ -9883,13 +9928,44 @@ void checkJoinConnection() {
   // Non-blocking join progress. First wait for WiFi, then open the TCP socket.
   if (isHost || networkConnected || appState != STATE_CONNECTING_JOIN) return;
 
-  if (WiFi.status() == WL_CONNECTED) {
-    netClient.connect(HOST_IP, NET_PORT);
+  unsigned long now = millis();
 
-    if (netClient && netClient.connected()) {
-      netClient.setTimeout(10);
-      networkConnected = true;
+  if (WiFi.status() != WL_CONNECTED) {
+    if (joinWifiStartedAt > 0 && now - joinWifiStartedAt > JOIN_WIFI_RETRY_MS) {
+      WiFi.disconnect();
+      delay(50);
+      joinWifiStartedAt = now;
+      WiFi.begin(joinNetworks[selectedJoinNetwork].c_str(), JOIN_WIFI_PASS);
     }
+
+    return;
+  }
+
+  if (netClient && netClient.connected()) {
+    netClient.setTimeout(10);
+    netClient.setNoDelay(true);
+    networkConnected = true;
+    return;
+  }
+
+  if (now - joinTcpLastAttempt < JOIN_TCP_RETRY_MS) return;
+
+  joinTcpLastAttempt = now;
+  joinTcpAttemptCount++;
+
+  if (netClient) {
+    netClient.stop();
+  }
+
+  Serial.print("Join TCP attempt ");
+  Serial.print(joinTcpAttemptCount);
+  Serial.print(" to ");
+  Serial.println(HOST_IP);
+
+  if (netClient.connect(HOST_IP, NET_PORT)) {
+    netClient.setTimeout(10);
+    netClient.setNoDelay(true);
+    networkConnected = true;
   }
 }
 
