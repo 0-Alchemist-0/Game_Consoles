@@ -1,6 +1,8 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 8.9 - 2026-07-01 10:56 - Converted remaining menu and page UI text
+// to English across Tic Tac Toe, shared network screens, and result screens.
 // Version 8.8 - 2026-07-01 10:01 - Reworked Home Settings into Music and WiFi
 // subpages, with Music ON/OFF, SFX ON/OFF, editable Host IP, and persisted
 // default WiFi SSID selection.
@@ -220,8 +222,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 8.8";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V88-2026070110";
+const char *APP_VERSION_TEXT = "Version 8.9";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V89-2026070110";
 
 
 
@@ -2639,7 +2641,7 @@ void drawButton(int x, int y, int w, int h, uint16_t fillColor, uint16_t borderC
 
   if (strcmp(label, "BACK") == 0 ||
       strcmp(label, "MENU") == 0 ||
-      strcmp(label, "MENIU") == 0 ||
+      strcmp(label, "MENU") == 0 ||
       strcmp(label, "HOME") == 0) {
     mainTextColor = RGB565_CYAN;
     shadowTextColor = rgb888to565(0, 65, 210);
@@ -3143,19 +3145,19 @@ void drawScoreBar() {
   gfx->drawLine(0, topBarH - 1, screenW, topBarH - 1, RGB565_WHITE);
 
   char scoreLine[48];
-  snprintf(scoreLine, sizeof(scoreLine), "Scor X:%d  O:%d  E:%d", scoreX, scoreO, scoreDraw);
+  snprintf(scoreLine, sizeof(scoreLine), "Score X:%d  O:%d  D:%d", scoreX, scoreO, scoreDraw);
   drawCenteredText(scoreLine, 10, 2, RGB565_WHITE);
 
   char turnLine[48];
 
   if (gameOver) {
-    snprintf(turnLine, sizeof(turnLine), "Joc terminat");
+    snprintf(turnLine, sizeof(turnLine), "Game over");
   } else if (localGame) {
-    snprintf(turnLine, sizeof(turnLine), "Randul: %c", currentPlayer);
+    snprintf(turnLine, sizeof(turnLine), "Turn: %c", currentPlayer);
   } else if (myTurn) {
-    snprintf(turnLine, sizeof(turnLine), "Randul tau: %c", myPlayer);
+    snprintf(turnLine, sizeof(turnLine), "Your turn: %c", myPlayer);
   } else {
-    snprintf(turnLine, sizeof(turnLine), "Asteapta: %c", currentPlayer);
+    snprintf(turnLine, sizeof(turnLine), "Waiting: %c", currentPlayer);
   }
 
   drawCenteredText(turnLine, 42, 2, (localGame || myTurn) ? RGB565_GREEN : RGB565_YELLOW);
@@ -3431,7 +3433,7 @@ void drawMenuScreen() {
 
   drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN - O", 2);
 
-  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCOR", 2);
+  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCORE", 2);
 
   drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
 
@@ -3495,7 +3497,7 @@ void drawRpsMenuScreen() {
 
   drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN - P2", 2);
 
-  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCOR", 2);
+  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCORE", 2);
 
   drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
 
@@ -3553,7 +3555,7 @@ void drawRpsResultScreen() {
     }
 
     char scoreLine[48];
-    snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d   E:%d", rpsScoreP1, rpsScoreP2, rpsScoreDraw);
+    snprintf(scoreLine, sizeof(scoreLine), "P1:%d   P2:%d   D:%d", rpsScoreP1, rpsScoreP2, rpsScoreDraw);
     drawCenteredText(scoreLine, 230, 2, RGB565_WHITE);
   }
 
@@ -8014,7 +8016,7 @@ void drawFroggerEspNowWaitingScreen() {
   }
 
   drawButton(btnMenuX, btnMenuY, btnMenuW, btnMenuH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENIU", 2);
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
 }
 
 void startFroggerHostEspNowMode() {
@@ -8067,7 +8069,7 @@ void drawPocketTanksMenuScreen() {
 
   drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN", 2);
 
-  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCOR", 2);
+  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCORE", 2);
 
   drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
 
@@ -8143,13 +8145,13 @@ void drawWaitingHostScreen() {
   } else if (tanksNetworkGame) {
     drawCenteredText("TANKS HOST", 28, 3, RGB565_GREEN);
   } else {
-    drawCenteredText(rpsNetworkGame ? "RPS HOST" : "HOST ACTIV", 28, 3, RGB565_GREEN);
+    drawCenteredText(rpsNetworkGame ? "RPS HOST" : "HOST ACTIVE", 28, 3, RGB565_GREEN);
   }
 
-  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame || froggerNetworkGame) ? "Tu esti P1" : "Tu esti X", 72, 2, RGB565_WHITE);
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame || froggerNetworkGame) ? "You are P1" : "You are X", 72, 2, RGB565_WHITE);
 
-  drawCenteredText("Asteapta oponentul", 118, 2, RGB565_YELLOW);
-  drawCenteredText("sa intre cu JOIN", 145, 2, RGB565_YELLOW);
+  drawCenteredText("Waiting opponent", 118, 2, RGB565_YELLOW);
+  drawCenteredText("to join", 145, 2, RGB565_YELLOW);
 
   drawCenteredText("WiFi:", 195, 2, RGB565_WHITE);
   drawCenteredText(epicSSIDList[selectedHostSSIDIndex], 222, 2, RGB565_CYAN);
@@ -8161,7 +8163,7 @@ void drawWaitingHostScreen() {
   drawCenteredText(ipLine, 297, 2, RGB565_CYAN);
 
   drawButton(btnMenuX, btnMenuY, btnMenuW, btnMenuH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENIU", 2);
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
 }
 
 void drawConnectingJoinScreen() {
@@ -8191,7 +8193,7 @@ void drawConnectingJoinScreen() {
     drawCenteredText(rpsNetworkGame ? "RPS JOIN" : "JOIN", 70, 3, RGB565_BLUE);
   }
 
-  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame || froggerNetworkGame) ? "Tu esti P2" : "Tu esti O", 120, 2, RGB565_WHITE);
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame || froggerNetworkGame) ? "You are P2" : "You are O", 120, 2, RGB565_WHITE);
 
   drawCenteredText("Connecting...", 190, 2, RGB565_YELLOW);
 
@@ -8205,7 +8207,7 @@ void drawConnectingJoinScreen() {
   drawCenteredText(ipLine, 255, 2, RGB565_WHITE);
 
   drawButton(btnMenuX, btnMenuY, btnMenuW, btnMenuH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENIU", 2);
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
 }
 
 void drawGameScreenFull() {
@@ -8215,31 +8217,31 @@ void drawGameScreenFull() {
   drawAllMarks();
 
   drawButton(btnMenuX, btnMenuY, btnMenuW, btnMenuH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENIU", 2);
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
 }
 
 void drawResultScreen() {
   gfx->fillScreen(RGB565_BLACK);
 
-  drawCenteredText("REZULTAT", 30, 3, RGB565_WHITE);
+  drawCenteredText("RESULT", 30, 3, RGB565_WHITE);
 
   if (winner == 'X') {
-    drawCenteredText("A castigat X!", 110, 3, RGB565_RED);
+    drawCenteredText("X wins!", 110, 3, RGB565_RED);
   } else if (winner == 'O') {
-    drawCenteredText("A castigat O!", 110, 3, RGB565_CYAN);
+    drawCenteredText("O wins!", 110, 3, RGB565_CYAN);
   } else {
-    drawCenteredText("Egalitate!", 110, 3, RGB565_YELLOW);
+    drawCenteredText("Draw!", 110, 3, RGB565_YELLOW);
   }
 
   char scoreLine[48];
-  snprintf(scoreLine, sizeof(scoreLine), "X:%d   O:%d   E:%d", scoreX, scoreO, scoreDraw);
+  snprintf(scoreLine, sizeof(scoreLine), "X:%d   O:%d   D:%d", scoreX, scoreO, scoreDraw);
   drawCenteredText(scoreLine, 210, 2, RGB565_WHITE);
 
   drawButton(btnPlayAgainX, btnPlayAgainY, btnPlayAgainW, btnPlayAgainH,
-             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "JOACA DIN NOU", 2);
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "PLAY AGAIN", 2);
 
   drawButton(btnResultMenuX, btnResultMenuY, btnResultMenuW, btnResultMenuH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "INAPOI LA MENIU", 2);
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK TO MENU", 2);
 }
 
 void drawHomeBuildInfo() {
@@ -9558,7 +9560,7 @@ void pollNetwork() {
         appState == STATE_FROGGER_PLAYING ||
         appState == STATE_FROGGER_PLACEHOLDER) {
       gfx->fillScreen(RGB565_BLACK);
-      drawCenteredText("Conexiune pierduta", 180, 2, RGB565_RED);
+      drawCenteredText("Connection lost", 180, 2, RGB565_RED);
       delay(1200);
       returnToMenu(false);
     }
