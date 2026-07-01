@@ -1,6 +1,9 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 9.0 - 2026-07-01 11:34 - Added Reset Score buttons and high-score
+// display lines to every game main menu, with persistent high scores for
+// Breakout, Pong, and Snake.
 // Version 8.9 - 2026-07-01 10:56 - Converted remaining menu and page UI text
 // to English across Tic Tac Toe, shared network screens, and result screens.
 // Version 8.8 - 2026-07-01 10:01 - Reworked Home Settings into Music and WiFi
@@ -222,8 +225,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 8.9";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V89-2026070110";
+const char *APP_VERSION_TEXT = "Version 9.0";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V90-2026070111";
 
 
 
@@ -482,6 +485,7 @@ int breakoutOldBallY = -1;
 int breakoutPaddleX = 0;
 int breakoutOldPaddleX = -1;
 int breakoutScore = 0;
+uint32_t breakoutHiScore = 0;
 int breakoutLives = 3;
 bool breakoutGameOver = false;
 bool breakoutWin = false;
@@ -535,6 +539,8 @@ int pongOldPlayerX = -1;
 int pongOldCpuX = -1;
 int pongPlayerScore = 0;
 int pongCpuScore = 0;
+int pongWinsP1 = 0;
+int pongWinsP2 = 0;
 int pongWinner = 0;
 bool pongGameOver = false;
 bool pongPlayerWon = false;
@@ -585,6 +591,7 @@ int snakeNextDir = SNAKE_DIR_RIGHT;
 int snakeFoodX = 0;
 int snakeFoodY = 0;
 int snakeScore = 0;
+uint32_t snakeHiScore = 0;
 bool snakeGameOver = false;
 unsigned long snakeLastFrame = 0;
 
@@ -1319,6 +1326,60 @@ void resetPocketTanksScore() {
   savePocketTanksScore();
 }
 
+void loadBreakoutScore() {
+  prefs.begin("breakout", true);
+  breakoutHiScore = prefs.getULong("hiscore", 0);
+  prefs.end();
+}
+
+void saveBreakoutScore() {
+  prefs.begin("breakout", false);
+  prefs.putULong("hiscore", breakoutHiScore);
+  prefs.end();
+}
+
+void resetBreakoutScore() {
+  breakoutHiScore = 0;
+  saveBreakoutScore();
+}
+
+void loadPongScore() {
+  prefs.begin("pong_score", true);
+  pongWinsP1 = prefs.getInt("p1", 0);
+  pongWinsP2 = prefs.getInt("p2", 0);
+  prefs.end();
+}
+
+void savePongScore() {
+  prefs.begin("pong_score", false);
+  prefs.putInt("p1", pongWinsP1);
+  prefs.putInt("p2", pongWinsP2);
+  prefs.end();
+}
+
+void resetPongScore() {
+  pongWinsP1 = 0;
+  pongWinsP2 = 0;
+  savePongScore();
+}
+
+void loadSnakeScore() {
+  prefs.begin("snake", true);
+  snakeHiScore = prefs.getULong("hiscore", 0);
+  prefs.end();
+}
+
+void saveSnakeScore() {
+  prefs.begin("snake", false);
+  prefs.putULong("hiscore", snakeHiScore);
+  prefs.end();
+}
+
+void resetSnakeScore() {
+  snakeHiScore = 0;
+  saveSnakeScore();
+}
+
 void loadRanchRushScore() {
   prefs.begin("ranch", true);
   rrHiScore = prefs.getULong("hiscore_ranch", 0);
@@ -1331,6 +1392,11 @@ void saveRanchRushScore() {
   prefs.end();
 }
 
+void resetRanchRushScore() {
+  rrHiScore = 0;
+  saveRanchRushScore();
+}
+
 void loadFroggerScore() {
   prefs.begin("frogger", true);
   frogHiScore = prefs.getULong("hiscore_frog", 0);
@@ -1341,6 +1407,11 @@ void saveFroggerScore() {
   prefs.begin("frogger", false);
   prefs.putULong("hiscore_frog", frogHiScore);
   prefs.end();
+}
+
+void resetFroggerScore() {
+  frogHiScore = 0;
+  saveFroggerScore();
 }
 
 // ============================================================================
@@ -2321,7 +2392,7 @@ void drawBreakoutPlayfieldDecor() {
 
   gfx->setTextSize(1);
   gfx->setTextColor(RGB565_CYAN);
-  gfx->setCursor(81, 348);
+  gfx->setCursor(81, 118);
   gfx->print("BRICK SMASHER  1UP");
 }
 
@@ -2379,7 +2450,7 @@ void drawPongCourtDecor() {
 
   gfx->setTextSize(1);
   gfx->setTextColor(RGB565_CYAN);
-  gfx->setCursor(92, 350);
+  gfx->setCursor(92, 118);
   gfx->print("CPU VS PLAYER");
 }
 
@@ -2445,7 +2516,7 @@ void drawSnakeBoardDecor() {
 
   gfx->setTextSize(1);
   gfx->setTextColor(RGB565_CYAN);
-  gfx->setCursor(92, 350);
+  gfx->setCursor(92, 118);
   gfx->print("GROW  SURVIVE  SCORE");
 }
 
@@ -2560,7 +2631,7 @@ void drawRanchRushFieldDecor() {
 
   gfx->setTextSize(1);
   gfx->setTextColor(RGB565_YELLOW);
-  gfx->setCursor(69, 350);
+  gfx->setCursor(69, 118);
   gfx->print("LANES  LASSO  CATTLE");
 }
 
@@ -2675,6 +2746,25 @@ void drawButton(int x, int y, int w, int h, uint16_t fillColor, uint16_t borderC
   gfx->setCursor(tx, ty);
   gfx->setTextColor(mainTextColor);
   gfx->print(label);
+}
+
+uint32_t highestOfTwo(uint32_t a, uint32_t b) {
+  return (a > b) ? a : b;
+}
+
+uint32_t highestOfThree(uint32_t a, uint32_t b, uint32_t c) {
+  return highestOfTwo(highestOfTwo(a, b), c);
+}
+
+void drawGameMenuHighScore(uint32_t highScore) {
+  char line[40];
+  snprintf(line, sizeof(line), "HIGH SCORE  %lu", (unsigned long)highScore);
+  drawCenteredTextWithShadow(line, 462, 1, RGB565_WHITE, RGB565_BLACK);
+}
+
+void drawGameMenuScoreAndHigh(const char *scoreLine, uint32_t highScore) {
+  drawCenteredTextWithShadow(scoreLine, 448, 1, RGB565_WHITE, RGB565_BLACK);
+  drawGameMenuHighScore(highScore);
 }
 
 void drawTextInRect(int x, int y, int w, int h, const char *label, int textSize, uint16_t color) {
@@ -3439,7 +3529,7 @@ void drawMenuScreen() {
 
   char scoreLine[48];
   snprintf(scoreLine, sizeof(scoreLine), "SCORE  X:%d  O:%d  D:%d", scoreX, scoreO, scoreDraw);
-  drawCenteredTextWithShadow(scoreLine, 462, 1, RGB565_WHITE, RGB565_BLACK);
+  drawGameMenuScoreAndHigh(scoreLine, highestOfThree(scoreX, scoreO, scoreDraw));
 }
 
 void drawGamesScreen() {
@@ -3503,7 +3593,7 @@ void drawRpsMenuScreen() {
 
   char scoreLine[48];
   snprintf(scoreLine, sizeof(scoreLine), "SCORE  P1:%d  P2:%d  D:%d", rpsScoreP1, rpsScoreP2, rpsScoreDraw);
-  drawCenteredTextWithShadow(scoreLine, 462, 1, RGB565_WHITE, RGB565_BLACK);
+  drawGameMenuScoreAndHigh(scoreLine, highestOfThree(rpsScoreP1, rpsScoreP2, rpsScoreDraw));
 }
 
 void drawRpsChoiceScreen(int playerNumber) {
@@ -3714,6 +3804,12 @@ void finishBreakoutRound(bool won) {
 
   breakoutGameOver = true;
   breakoutWin = won;
+
+  if ((uint32_t)breakoutScore > breakoutHiScore) {
+    breakoutHiScore = breakoutScore;
+    saveBreakoutScore();
+  }
+
   drawBreakoutHud();
   drawBreakoutEndOverlay();
 
@@ -3827,6 +3923,12 @@ void updateBreakoutGame() {
           breakoutBallY - BREAKOUT_BALL_R <= by + BREAKOUT_BRICK_H) {
         breakoutBricks[r][c] = false;
         breakoutScore += 10;
+
+        if ((uint32_t)breakoutScore > breakoutHiScore) {
+          breakoutHiScore = breakoutScore;
+          saveBreakoutScore();
+        }
+
         breakoutBallVY = -breakoutBallVY;
         drawBreakoutBrick(r, c);
         drawBreakoutHud();
@@ -3914,7 +4016,11 @@ void drawBreakoutMenuScreen() {
 
   drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN", 2);
 
+  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCORE", 2);
+
   drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
+
+  drawGameMenuHighScore(breakoutHiScore);
 }
 
 void drawBreakoutPlaceholderScreen(const char *title) {
@@ -4040,6 +4146,15 @@ void finishPongGame(int winnerPlayer) {
   pongPlayerWon = localGame ? (winnerPlayer == 1) :
                   ((myPlayer == '1' && winnerPlayer == 1) ||
                    (myPlayer == '2' && winnerPlayer == 2));
+
+  if (winnerPlayer == 1) {
+    pongWinsP1++;
+    savePongScore();
+  } else if (winnerPlayer == 2) {
+    pongWinsP2++;
+    savePongScore();
+  }
+
   drawPongHud();
   drawPongEndOverlay();
 
@@ -4390,7 +4505,13 @@ void drawPongMenuScreen() {
 
   drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN", 2);
 
+  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCORE", 2);
+
   drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
+
+  char scoreLine[48];
+  snprintf(scoreLine, sizeof(scoreLine), "SCORE  P1:%d  P2:%d", pongWinsP1, pongWinsP2);
+  drawGameMenuScoreAndHigh(scoreLine, highestOfTwo(pongWinsP1, pongWinsP2));
 }
 
 void drawPongPlaceholderScreen(const char *title) {
@@ -4416,7 +4537,11 @@ void drawSnakeMenuScreen() {
 
   drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN", 2);
 
+  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCORE", 2);
+
   drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
+
+  drawGameMenuHighScore(snakeHiScore);
 }
 
 void drawSnakePlaceholderScreen(const char *title) {
@@ -4775,6 +4900,12 @@ void setSnakeDirection(int dir) {
 
 void finishSnakeGame() {
   snakeGameOver = true;
+
+  if ((uint32_t)snakeScore > snakeHiScore) {
+    snakeHiScore = snakeScore;
+    saveSnakeScore();
+  }
+
   beepDraw();
   drawSnakeHud();
   drawSnakeGameOverOverlay();
@@ -4928,6 +5059,12 @@ void updateSnakeGame() {
   if (willGrow && snakeLength < SNAKE_MAX_LEN) {
     snakeLength++;
     snakeScore++;
+
+    if ((uint32_t)snakeScore > snakeHiScore) {
+      snakeHiScore = snakeScore;
+      saveSnakeScore();
+    }
+
     beepMove();
   }
 
@@ -5156,7 +5293,11 @@ void drawRanchRushMenuScreen() {
 
   drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN", 2);
 
+  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCORE", 2);
+
   drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
+
+  drawGameMenuHighScore(rrHiScore);
 }
 
 void drawRanchRushPlaceholderScreen(const char *title) {
@@ -6343,11 +6484,10 @@ void drawFroggerMenuScreen() {
   drawTransparentArcadeButton(btnLocalX, btnLocalY, btnLocalW, btnLocalH, "LOCAL", 2);
   drawTransparentArcadeButton(btnHostX, btnHostY, btnHostW, btnHostH, "HOST", 2);
   drawTransparentArcadeButton(btnJoinX, btnJoinY, btnJoinW, btnJoinH, "JOIN", 2);
+  drawTransparentArcadeButton(btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH, "RESET SCORE", 2);
   drawTransparentArcadeButton(btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH, "BACK", 2);
 
-  char scoreLine[48];
-  snprintf(scoreLine, sizeof(scoreLine), "HIGH SCORE  %lu", (unsigned long)frogHiScore);
-  drawCenteredTextWithShadow(scoreLine, 462, 1, RGB565_WHITE, RGB565_BLACK);
+  drawGameMenuHighScore(frogHiScore);
 }
 
 void drawFroggerPlaceholderScreen(const char *title) {
@@ -8075,7 +8215,7 @@ void drawPocketTanksMenuScreen() {
 
   char scoreLine[48];
   snprintf(scoreLine, sizeof(scoreLine), "SCORE  P1:%d  P2:%d", ptScoreP1, ptScoreP2);
-  drawCenteredTextWithShadow(scoreLine, 462, 1, RGB565_WHITE, RGB565_BLACK);
+  drawGameMenuScoreAndHigh(scoreLine, highestOfTwo(ptScoreP1, ptScoreP2));
 }
 
 void drawPocketTanksGameScreen() {
@@ -9798,6 +9938,13 @@ void handleBreakoutMenuTouch(int x, int y) {
     return;
   }
 
+  if (inRect(x, y, btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH)) {
+    beepClick();
+    resetBreakoutScore();
+    drawBreakoutMenuScreen();
+    return;
+  }
+
   if (inRect(x, y, btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH)) {
     beepClick();
     drawGamesMoreScreen();
@@ -9855,6 +10002,13 @@ void handlePongMenuTouch(int x, int y) {
     return;
   }
 
+  if (inRect(x, y, btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH)) {
+    beepClick();
+    resetPongScore();
+    drawPongMenuScreen();
+    return;
+  }
+
   if (inRect(x, y, btnTttHomeX, btnTttHomeY, btnTttHomeW, btnTttHomeH)) {
     beepClick();
     drawGamesMoreScreen();
@@ -9887,6 +10041,13 @@ void handleSnakeMenuTouch(int x, int y) {
     beepStart();
     activeNetworkGame = NETWORK_GAME_SNAKE;
     startJoinMode();
+    return;
+  }
+
+  if (inRect(x, y, btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH)) {
+    beepClick();
+    resetSnakeScore();
+    drawSnakeMenuScreen();
     return;
   }
 
@@ -9928,6 +10089,13 @@ void handleRanchRushMenuTouch(int x, int y) {
     beepStart();
     activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
     startJoinMode();
+    return;
+  }
+
+  if (inRect(x, y, btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH)) {
+    beepClick();
+    resetRanchRushScore();
+    drawRanchRushMenuScreen();
     return;
   }
 
@@ -10016,6 +10184,13 @@ void handleFroggerMenuTouch(int x, int y) {
     beepStart();
     activeNetworkGame = NETWORK_GAME_FROGGER;
     startJoinMode();
+    return;
+  }
+
+  if (inRect(x, y, btnResetScoreX, btnResetScoreY, btnResetScoreW, btnResetScoreH)) {
+    beepClick();
+    resetFroggerScore();
+    drawFroggerMenuScreen();
     return;
   }
 
@@ -10924,6 +11099,9 @@ void setup() {
   loadScore();
   loadRpsScore();
   loadPocketTanksScore();
+  loadBreakoutScore();
+  loadPongScore();
+  loadSnakeScore();
   loadRanchRushScore();
   loadFroggerScore();
   loadNetworkSettings();
