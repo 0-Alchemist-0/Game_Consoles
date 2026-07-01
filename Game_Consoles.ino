@@ -1,191 +1,195 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
-// Version 9.2 - 2026-07-01 19:54 - Added network Hex Pipes gameplay with a
+// Version 9.4 - 2026-07-01 - Expanded source block comments with game
+// ownership notes so each major code area explains its purpose.
+// Version 9.3 - 2026-07-01 - Removed the hour from every changelog entry and
+// standardized changelog dates to use date-only format.
+// Version 9.2 - 2026-07-01 - Added network Hex Pipes gameplay with a
 // shared puzzle seed, visible P1/P2 move counters, solve-time race logic, and
 // less-moves tie breaker.
-// Version 9.1 - 2026-07-01 16:17 - Added Hex Pipes to the Games menu with a
+// Version 9.1 - 2026-07-01 - Added Hex Pipes to the Games menu with a
 // dedicated game menu, hexapipes.vercel.app reference, local playable puzzle,
 // best-score storage, and Host/Join placeholders.
-// Version 9.0 - 2026-07-01 11:34 - Added Reset Score buttons and high-score
+// Version 9.0 - 2026-07-01 - Added Reset Score buttons and high-score
 // display lines to every game main menu, with persistent high scores for
 // Breakout, Pong, and Snake.
-// Version 8.9 - 2026-07-01 10:56 - Converted remaining menu and page UI text
+// Version 8.9 - 2026-07-01 - Converted remaining menu and page UI text
 // to English across Tic Tac Toe, shared network screens, and result screens.
-// Version 8.8 - 2026-07-01 10:01 - Reworked Home Settings into Music and WiFi
+// Version 8.8 - 2026-07-01 - Reworked Home Settings into Music and WiFi
 // subpages, with Music ON/OFF, SFX ON/OFF, editable Host IP, and persisted
 // default WiFi SSID selection.
-// Version 8.7 - 2026-07-01 09:49 - Added a looping non-game background
+// Version 8.7 - 2026-07-01 - Added a looping non-game background
 // chiptune inspired by the attached arcade melody, with automatic mute during
 // gameplay and short audio cues taking priority.
-// Version 8.6 - 2026-06-19 07:21 - Switched Frogger Host/Join to use the standard
+// Version 8.6 - 2026-06-19 - Switched Frogger Host/Join to use the standard
 // WiFi TCP flow (same as Tic Tac Toe) instead of ESP-NOW.  Both players run
 // traffic locally, exchange frog-state/goal/over messages over TCP, and the
 // FROG_STATE parsing is now symmetric so both host and join apply remote state.
-// Version 8.5 - 2026-06-18 14:50 - Reworked Frogger Host/Join to use the
+// Version 8.5 - 2026-06-18 - Reworked Frogger Host/Join to use the
 // attached ESP-NOW peer-to-peer concept with local frog simulation, HELLO/ACK/
 // START pairing, and compact frog, goal, and game-over packets.
-// Version 8.4 - 2026-06-18 14:34 - Reworked Frogger network gameplay using the
+// Version 8.4 - 2026-06-18 - Reworked Frogger network gameplay using the
 // attached local-simulation model: each console moves its own frog and exchanges
 // compact frog states over the existing TCP link.
-// Version 8.3 - 2026-06-18 14:14 - Reverted Frogger JOIN local lane animation
+// Version 8.3 - 2026-06-18 - Reverted Frogger JOIN local lane animation
 // changes after they broke second-console gameplay.
-// Version 8.2 - 2026-06-18 14:08 - Prevented Frogger JOIN lane position jumps
+// Version 8.2 - 2026-06-18 - Prevented Frogger JOIN lane position jumps
 // by using remote lane coordinates only during full redraw synchronization.
-// Version 8.1 - 2026-06-18 14:06 - Reduced Frogger JOIN flicker by animating
+// Version 8.1 - 2026-06-18 - Reduced Frogger JOIN flicker by animating
 // lanes locally and using remote states only for sync plus player redraws.
-// Version 8.0 - 2026-06-18 13:51 - Reduced Frogger network state backlog and
+// Version 8.0 - 2026-06-18 - Reduced Frogger network state backlog and
 // added input sequence tracking so P2 movement is not overwritten by old states.
-// Version 7.9 - 2026-06-18 13:34 - Fixed Frogger network controls by forcing
+// Version 7.9 - 2026-06-18 - Fixed Frogger network controls by forcing
 // P1/P2 player roles, immediate network respawn, and lighter remote input redraws.
-// Version 7.8 - 2026-06-18 13:28 - Fixed Frogger network movement feedback by
+// Version 7.8 - 2026-06-18 - Fixed Frogger network movement feedback by
 // redrawing player inputs immediately and moving the first road car off-center.
-// Version 7.7 - 2026-06-18 13:22 - Fixed the Frogger network compile error by
+// Version 7.7 - 2026-06-18 - Fixed the Frogger network compile error by
 // declaring sendFroggerState before updateFroggerGame uses it.
-// Version 7.6 - 2026-06-18 13:08 - Added host-authoritative Frogger network
+// Version 7.6 - 2026-06-18 - Added host-authoritative Frogger network
 // gameplay with two visible colored players sharing the same lanes and logs.
-// Version 7.5 - 2026-06-18 12:29 - Added Frogger to the Games menu with a
+// Version 7.5 - 2026-06-18 - Added Frogger to the Games menu with a
 // dedicated mode menu and local playable road, river, logs, cars, goals, and
 // high score gameplay.
-// Version 7.4 - 2026-06-18 10:41 - Added host-authoritative Ranch Rush network
+// Version 7.4 - 2026-06-18 - Added host-authoritative Ranch Rush network
 // gameplay with two visible differently colored players and synced ranch state.
-// Version 7.3 - 2026-06-18 10:26 - Fixed Ranch Rush lasso persistence by using
+// Version 7.3 - 2026-06-18 - Fixed Ranch Rush lasso persistence by using
 // a gameplay cowboy sprite without the decorative menu lasso loop.
-// Version 7.2 - 2026-06-18 10:15 - Implemented local Ranch Rush gameplay with
+// Version 7.2 - 2026-06-18 - Implemented local Ranch Rush gameplay with
 // lane movement, lasso catching, animal spawning, lives, levels, high score,
 // dirty-rect rendering, restart, and menu return.
-// Version 7.1 - 2026-06-18 10:07 - Added Ranch Rush to the Games menu with a
+// Version 7.1 - 2026-06-18 - Added Ranch Rush to the Games menu with a
 // ranch-themed mode menu, Local/Host/Join/Back navigation, and shared network
 // setup placeholders.
-// Version 7.0 - 2026-06-18 09:27 - Added network Snake gameplay with
+// Version 7.0 - 2026-06-18 - Added network Snake gameplay with
 // host-authoritative two-player movement, synced state packets, shared food,
 // different snake colors, and remote direction control.
-// Version 6.9 - 2026-06-18 08:18 - Reduced Snake movement flicker by switching
+// Version 6.9 - 2026-06-18 - Reduced Snake movement flicker by switching
 // from full-board redraws to incremental cell updates during movement.
-// Version 6.8 - 2026-06-18 08:06 - Implemented local Snake gameplay with a
+// Version 6.8 - 2026-06-18 - Implemented local Snake gameplay with a
 // timed grid loop, food spawning, collision detection, score HUD, touch
 // direction controls, restart, and menu return.
-// Version 6.7 - 2026-06-18 07:46 - Added Snake to the Games menu with a
+// Version 6.7 - 2026-06-18 - Added Snake to the Games menu with a
 // dedicated Local, Host, Join, and Back mode menu wired into the shared
 // network setup flow.
-// Version 6.6 - 2026-06-18 07:11 - Improved network Pong Player 2 paddle
+// Version 6.6 - 2026-06-18 - Improved network Pong Player 2 paddle
 // collision by preserving client-owned paddle state, adding remote-paddle hit
 // forgiveness, and predicting local bounce.
-// Version 6.5 - 2026-06-17 23:14 - Smoothed network Pong ball movement by
+// Version 6.5 - 2026-06-17 - Smoothed network Pong ball movement by
 // sending velocity in PN_STATE, throttling host broadcasts, and predicting
 // ball motion locally between received state packets.
-// Version 6.4 - 2026-06-17 22:44 - Added Host/Join network gameplay for
+// Version 6.4 - 2026-06-17 - Added Host/Join network gameplay for
 // Pong with host-authoritative ball physics and synced paddle/score state.
-// Version 6.3 - 2026-06-17 22:28 - Added Pong to the Games menu with a
+// Version 6.3 - 2026-06-17 - Added Pong to the Games menu with a
 // local playable portrait paddle game and arcade-style menu.
-// Version 6.2 - 2026-06-17 22:07 - Added Host/Join network gameplay for
+// Version 6.2 - 2026-06-17 - Added Host/Join network gameplay for
 // Breakout where the first player to lose all three lives loses the match.
-// Version 6.1 - 2026-06-17 21:59 - Matched Breakout menu buttons to the
+// Version 6.1 - 2026-06-17 - Matched Breakout menu buttons to the
 // Tic Tac Toe transparent arcade text style by removing extra slot panels.
-// Version 6.0 - 2026-06-17 21:42 - Added a generated arcade fallback
+// Version 6.0 - 2026-06-17 - Added a generated arcade fallback
 // background for the Breakout menu and switched its menu buttons to the
 // transparent Tic Tac Toe arcade text style.
-// Version 5.9 - 2026-06-17 20:37 - Implemented local portrait Breakout
+// Version 5.9 - 2026-06-17 - Implemented local portrait Breakout
 // gameplay with bricks, paddle, touch controls, lives, score, and restart.
-// Version 5.8 - 2026-06-17 20:15 - Added a generated arcade fallback
+// Version 5.8 - 2026-06-17 - Added a generated arcade fallback
 // background for the Tanks Wars menu and switched its menu buttons to the
 // transparent Tic Tac Toe arcade text style.
-// Version 5.7 - 2026-06-17 20:09 - Added a second Games page with Breakout and
+// Version 5.7 - 2026-06-17 - Added a second Games page with Breakout and
 // a Breakout mode menu containing Local, Host, Join, and Back.
-// Version 5.6 - 2026-06-17 19:30 - Added Host/Join network gameplay for Tanks
+// Version 5.6 - 2026-06-17 - Added Host/Join network gameplay for Tanks
 // Wars with synced terrain seed, controls, turns, and firing.
-// Version 5.5 - 2026-06-17 19:24 - Added a generated arcade HOME fallback
+// Version 5.5 - 2026-06-17 - Added a generated arcade HOME fallback
 // screen when SD home assets are missing.
-// Version 5.4 - 2026-06-16 22:19 - Renamed user-facing artillery game text to
+// Version 5.4 - 2026-06-16 - Renamed user-facing artillery game text to
 // Tanks Wars across menus, placeholders, and screen titles.
-// Version 5.3 - 2026-06-03 22:20 - Added SD-loaded Rock-Paper-Scissors menu
+// Version 5.3 - 2026-06-03 - Added SD-loaded Rock-Paper-Scissors menu
 // background support from /RPSLS_game/main_screen/rock_paper_scissors_background.raw.
-// Version 5.2 - 2026-06-03 22:11 - Ported the Rock-Paper-Scissors arcade menu
+// Version 5.2 - 2026-06-03 - Ported the Rock-Paper-Scissors arcade menu
 // background and switched its menu to the transparent arcade text buttons.
-// Version 5.1 - 2026-06-03 21:35 - Changed Games and Tic Tac Toe menu buttons
+// Version 5.1 - 2026-06-03 - Changed Games and Tic Tac Toe menu buttons
 // to transparent arcade text buttons with consistent two-color lettering.
-// Version 5.0 - 2026-06-03 21:30 - Added SD-loaded Tic Tac Toe menu background
+// Version 5.0 - 2026-06-03 - Added SD-loaded Tic Tac Toe menu background
 // support from /tictactoe_game/tictactoe_background.raw with generated fallback.
-// Version 4.9 - 2026-06-03 21:25 - Added SD-loaded Games screen background
+// Version 4.9 - 2026-06-03 - Added SD-loaded Games screen background
 // support from /games_screen/games_background.raw with generated fallback.
-// Version 4.8 - 2026-06-03 18:28 - Added an arcade background and marquee title
+// Version 4.8 - 2026-06-03 - Added an arcade background and marquee title
 // to the Games selection screen, reusing the neon button text style.
-// Version 4.7 - 2026-06-03 18:14 - Ported the arcade Tic Tac Toe menu artwork
+// Version 4.7 - 2026-06-03 - Ported the arcade Tic Tac Toe menu artwork
 // and changed shared UI buttons to the same neon arcade style.
-// Version 4.6 - 2026-06-03 17:42 - Added Arduino Nano ESP32 board-label and
+// Version 4.6 - 2026-06-03 - Added Arduino Nano ESP32 board-label and
 // physical-header comments for each configured GPIO.
-// Version 4.5 - 2026-05-28 11:43 - Added explanatory comments across the main
+// Version 4.5 - 2026-05-28 - Added explanatory comments across the main
 // source blocks to make hardware, UI, networking, and game logic easier to read.
-// Version 4.4 - 2026-05-27 17:28 - Added randomized Tanks Wars terrain
+// Version 4.4 - 2026-05-27 - Added randomized Tanks Wars terrain
 // generation for each new local round.
-// Version 4.3 - 2026-05-27 17:24 - Removed Tanks Wars full-screen redraws
+// Version 4.3 - 2026-05-27 - Removed Tanks Wars full-screen redraws
 // from angle and power controls to reduce UI flicker.
-// Version 4.2 - 2026-05-27 17:16 - Smoothed Tanks Wars projectile animation
+// Version 4.2 - 2026-05-27 - Smoothed Tanks Wars projectile animation
 // by redrawing only the projectile area with a fixed frame time.
-// Version 4.1 - 2026-05-27 16:59 - Replaced Battleship with a Tanks Wars
+// Version 4.1 - 2026-05-27 - Replaced Battleship with a Tanks Wars
 // menu and added first local artillery gameplay with destructible terrain.
-// Version 4.0 - 2026-05-27 15:32 - Added viewpoint-specific RPSLS network
+// Version 4.0 - 2026-05-27 - Added viewpoint-specific RPSLS network
 // result images from /RPSLS_game/win and /RPSLS_game/lose.
-// Version 3.9 - 2026-05-27 15:03 - Added network Host/Join gameplay for RPSLS
+// Version 3.9 - 2026-05-27 - Added network Host/Join gameplay for RPSLS
 // using the same WiFi setup flow and hidden-choice result logic as local play.
-// Version 3.8 - 2026-05-27 14:48 - Changed game mode menu Home buttons to Back
+// Version 3.8 - 2026-05-27 - Changed game mode menu Home buttons to Back
 // buttons that return to the Games selection screen.
-// Version 3.7 - 2026-05-20 22:52 - Added SD-loaded RPSLS draw screens based on
+// Version 3.7 - 2026-05-20 - Added SD-loaded RPSLS draw screens based on
 // the shared choice selected by both players.
-// Version 3.6 - 2026-05-20 22:27 - Added SD-loaded RPSLS winning screens based
+// Version 3.6 - 2026-05-20 - Added SD-loaded RPSLS winning screens based
 // on the exact winning choice combination for Player 1 and Player 2.
-// Version 3.5 - 2026-05-20 21:36 - Added Home screen version/build metadata
+// Version 3.5 - 2026-05-20 - Added Home screen version/build metadata
 // and defined the Build ID format based on version plus date/hour.
-// Version 3.4 - 2026-05-20 21:29 - Removed timezone offsets from changelog
+// Version 3.4 - 2026-05-20 - Removed timezone offsets from changelog
 // timestamps and standardized future changelog entries to omit them.
-// Version 3.3 - 2026-05-20 21:27 - Added version numbers to all
+// Version 3.3 - 2026-05-20 - Added version numbers to all
 // changelog entries, starting at Version 1.0 and incrementing by 0.1 per change.
-// Version 3.2 - 2026-05-20 21:16 - Switched the RPSLS choice screen to use the
+// Version 3.2 - 2026-05-20 - Switched the RPSLS choice screen to use the
 // SD-loaded /RPSLS_game/general/rpsls_wheel.raw image while keeping invisible
 // touch segments for selection.
-// Version 3.1 - 2026-05-15 23:01 - Added the missing RGB888 to RGB565 helper used by
+// Version 3.1 - 2026-05-15 - Added the missing RGB888 to RGB565 helper used by
 // the Rock-Paper-Scissors wheel colors.
-// Version 3.0 - 2026-05-15 22:56 - Replaced the Rock-Paper-Scissors placeholder with
+// Version 3.0 - 2026-05-15 - Replaced the Rock-Paper-Scissors placeholder with
 // a local Rock-Paper-Scissors-Lizard-Spock flow, menu, scores, and result page.
-// Version 2.9 - 2026-05-15 21:52 - Added a Games hub page with Tic Tac Toe,
+// Version 2.9 - 2026-05-15 - Added a Games hub page with Tic Tac Toe,
 // Rock-Paper-Scissors, Battleship, and Home navigation.
-// Version 2.8 - 2026-05-14 23:38 - Expanded Join WiFi selection to show eight SSIDs
+// Version 2.8 - 2026-05-14 - Expanded Join WiFi selection to show eight SSIDs
 // per page and added MORE pagination for additional scanned networks.
-// Version 2.7 - 2026-05-14 23:31 - Added "Connect and Die" and "The LAN of the Free"
+// Version 2.7 - 2026-05-14 - Added "Connect and Die" and "The LAN of the Free"
 // to the selectable Host SSID list.
-// Version 2.6 - 2026-05-14 23:27 - Expanded the Host Select SSID page to show eight
+// Version 2.6 - 2026-05-14 - Expanded the Host Select SSID page to show eight
 // SSID options per page.
-// Version 2.5 - 2026-05-14 23:24 - Changed the frame_000.raw intro hold from 4 seconds
+// Version 2.5 - 2026-05-14 - Changed the frame_000.raw intro hold from 4 seconds
 // to 1 second.
-// Version 2.4 - 2026-05-14 23:13 - Finalized Host Select SSID layout with four visible
+// Version 2.4 - 2026-05-14 - Finalized Host Select SSID layout with four visible
 // SSIDs per page, compact list text, and larger Host waiting SSID/IP display.
-// Version 2.3 - 2026-05-14 23:00 - Added two-step Host setup: select an epic SSID,
+// Version 2.3 - 2026-05-14 - Added two-step Host setup: select an epic SSID,
 // confirm Host IP with keypad, then start AP mode with password Alchemist2026.
-// Version 2.2 - 2026-05-14 22:47 - Added two-step Join setup: select scanned WiFi
+// Version 2.2 - 2026-05-14 - Added two-step Join setup: select scanned WiFi
 // network, confirm Host IP with keypad, then connect with password Alchemist2026.
-// Version 2.1 - 2026-05-14 22:18 - Added an IP settings page with four editable fields,
+// Version 2.1 - 2026-05-14 - Added an IP settings page with four editable fields,
 // numeric keypad input, persistent storage, and default IP 192.168.10.1.
-// Version 2.0 - 2026-05-11 22:06 - Moved the Tic Tac Toe Home button to the game mode
+// Version 2.0 - 2026-05-11 - Moved the Tic Tac Toe Home button to the game mode
 // menu page with Local, Host, Join, and Reset Score.
-// Version 1.9 - 2026-05-11 19:41 - Changed the home screen Exit button to reboot the
+// Version 1.9 - 2026-05-11 - Changed the home screen Exit button to reboot the
 // ESP32 instead of blanking the display.
-// Version 1.8 - 2026-05-11 19:33 - Scaled the home screen RAW buttons to fit the
+// Version 1.8 - 2026-05-11 - Scaled the home screen RAW buttons to fit the
 // button slots defined in background.raw.
-// Version 1.7 - 2026-05-11 18:52 - Added an SD-loaded home screen after the intro with
+// Version 1.7 - 2026-05-11 - Added an SD-loaded home screen after the intro with
 // background and Games, Settings, and Exit RAW buttons.
-// Version 1.6 - 2026-05-11 18:40 - Added a 4 second hold on frame_000.raw before the
+// Version 1.6 - 2026-05-11 - Added a 4 second hold on frame_000.raw before the
 // rest of the RAW intro animation plays.
-// Version 1.5 - 2026-05-11 18:05 - Finalized RAW565 portrait intro playback at normal
+// Version 1.5 - 2026-05-11 - Finalized RAW565 portrait intro playback at normal
 // rotation, starting from frame_000.raw.
-// Version 1.4 - 2026-05-11 15:35 - Enabled inverted display colors through a dedicated
+// Version 1.4 - 2026-05-11 - Enabled inverted display colors through a dedicated
 // display setting.
-// Version 1.3 - 2026-05-11 15:27 - Added microSD support for boot intro and SD-loaded
+// Version 1.3 - 2026-05-11 - Added microSD support for boot intro and SD-loaded
 // UI assets while keeping local and WiFi gameplay modes.
-// Version 1.2 - 2026-05-11 14:58 - Removed the duplicate sketch compile conflict by
+// Version 1.2 - 2026-05-11 - Removed the duplicate sketch compile conflict by
 // keeping Game_Consoles.ino as the active Arduino sketch file.
-// Version 1.1 - 2026-05-11 14:49 - Rebuilt the sketch with a clean structure while
+// Version 1.1 - 2026-05-11 - Rebuilt the sketch with a clean structure while
 // keeping local play, WiFi host/join play, persistent score, touch input, and UI.
-// Version 1.0 - 2026-05-11 14:18 - Added local play mode with a main menu option,
+// Version 1.0 - 2026-05-11 - Added local play mode with a main menu option,
 // allowing X and O to play on the same device without WiFi.
 
 #include <Arduino_GFX_Library.h>
@@ -231,8 +235,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 9.2";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V92-2026070119";
+const char *APP_VERSION_TEXT = "Version 9.4";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V94-2026070120";
 
 
 
@@ -292,7 +296,8 @@ WiFiClient netClient;
 // ============================================================================
 // DISPLAY / STORAGE
 // ============================================================================
-// Global display, persistent flash storage, and SD readiness state.
+// Global display, persistent flash storage, and SD readiness state shared by
+// Home, Settings, and every game.
 Preferences prefs;
 const bool INVERT_DISPLAY_COLORS = true;
 
@@ -314,7 +319,8 @@ bool sfxEnabled = true;
 // APP STATE
 // ============================================================================
 // Every screen has one AppState so the touch router can dispatch input to the
-// correct handler without guessing from what was last drawn.
+// correct handler without guessing from what was last drawn. These states cover
+// Home/Games, Settings, shared WiFi setup, and all game screens.
 enum AppState {
   STATE_HOME,
   STATE_GAMES,
@@ -367,8 +373,8 @@ enum AppState {
 
 AppState appState = STATE_HOME;
 
-// The WiFi setup screens are shared by Tic Tac Toe and RPSLS. This value tells
-// the connection code which game should start after Host/Join connects.
+// The WiFi setup screens are shared by all network-capable games. This value
+// tells the connection code which game should start after Host/Join connects.
 enum NetworkGameType {
   NETWORK_GAME_TTT,
   NETWORK_GAME_RPS,
@@ -389,6 +395,9 @@ char currentPlayer = 'X';
 bool gameOver = false;
 char winner = ' ';
 
+// Shared local/network role flags. Tic Tac Toe, RPSLS, Tanks Wars, Breakout,
+// Pong, Snake, Ranch Rush, Frogger, and Hex Pipes all use these to decide who
+// may act and which menu should be restored after leaving a game.
 bool localGame = false;
 bool isHost = false;
 bool networkConnected = false;
@@ -415,6 +424,7 @@ char ipFieldText[4][4] = {"192", "168", "10", "1"};
 int activeIpField = 0;
 bool activeIpFieldNeedsClear = true;
 
+// Tic Tac Toe persistent score values.
 int scoreX = 0;
 int scoreO = 0;
 int scoreDraw = 0;
@@ -901,6 +911,9 @@ const int boardY = 110;
 const int boardSize = 280;
 const int cellSize = boardSize / 3;
 
+// Shared game menu buttons. Tic Tac Toe, RPSLS, Tanks Wars, Breakout, Pong,
+// Snake, Ranch Rush, Frogger, and Hex Pipes all reuse this Local/Host/Join/
+// Reset/Back layout so the touch routing stays consistent across games.
 const int btnLocalX = 30;
 const int btnLocalY = 150;
 const int btnLocalW = 260;
@@ -941,6 +954,8 @@ const int btnTttHomeY = 390;
 const int btnTttHomeW = 260;
 const int btnTttHomeH = 54;
 
+// Games hub page buttons. The hub is paged, so these constants are shared by
+// page 1, page 2, and the extra page that contains Hex Pipes and Frogger.
 const int btnGamesX = 35;
 const int btnGamesTttY = 135;
 const int btnGamesRpsY = 205;
@@ -962,6 +977,8 @@ const int btnEmptyBackY = 420;
 const int btnEmptyBackW = 140;
 const int btnEmptyBackH = 40;
 
+// RPSLS choice wheel geometry and SD image folders. The wheel image is visible,
+// while the five choice sectors are invisible touch targets calculated from it.
 const int rpsWheelCenterX = 160;
 const int rpsWheelCenterY = 250;
 const int rpsWheelRadius = 145;
@@ -976,6 +993,8 @@ const int btnRpsMenuY = 420;
 const int btnRpsMenuW = 140;
 const int btnRpsMenuH = 40;
 
+// Tanks Wars artillery geometry. These values define terrain, tank sprites,
+// projectile animation, explosion damage, and the angle/power/fire controls.
 const int ptFieldTop = 0;
 const int ptFieldBottom = 355;
 const int ptTankW = 22;
@@ -1005,6 +1024,8 @@ const int btnPtMenuY = 424;
 const int btnPtMenuW = 130;
 const int btnPtMenuH = 40;
 
+// Home screen RAW asset layout. The background and three button images are read
+// from SD when present; the same hitboxes are used by the fallback drawing.
 const int homeButtonRawW = 320;
 const int homeButtonRawH = 90;
 
@@ -1026,6 +1047,8 @@ const int homeGamesTouchY = 287;
 const int homeSettingsTouchY = 336;
 const int homeExitTouchY = 384;
 
+// Settings, Host IP, and Join IP editor geometry. The four fields hold one IP
+// octet each, and the same numeric keypad is reused on all IP-entry pages.
 const int settingsFieldX = 18;
 const int settingsFieldY = 92;
 const int settingsFieldW = 62;
@@ -1078,6 +1101,8 @@ const int btnWifiNextX = 246;
 const int btnWifiNextW = 62;
 const int btnWifiSsidH = 30;
 
+// Join setup geometry. The first page lists scanned WiFi networks, then the
+// Join IP page confirms the host address before opening the TCP connection.
 const int joinNetworkX = 20;
 const int joinNetworkY = 112;
 const int joinNetworkW = 280;
@@ -1121,6 +1146,8 @@ const int btnJoinIpConnectY = 420;
 const int btnJoinIpConnectW = 130;
 const int btnJoinIpConnectH = 40;
 
+// Host setup geometry. The first page selects the AP SSID, and the second page
+// confirms the host IP used by all network games.
 const int hostSSIDX = 20;
 const int hostSSIDY = 112;
 const int hostSSIDW = 280;
@@ -1156,7 +1183,9 @@ const int btnHostIpStartH = 40;
 // RAW565 VIDEO PLAYER - /intro/frame_000.raw ... /intro/frame_074.raw
 // ============================================================================
 // RAW565 assets are stored as RGB565 pixels without headers. Drawing in small
-// line blocks keeps RAM usage low while still streaming directly from SD.
+// line blocks keeps RAM usage low while still streaming directly from SD. This
+// loader is shared by the boot intro, Home/Games backgrounds, game menu
+// backgrounds, RPSLS result screens, and fallback UI assets.
 static const int VIDEO_W = 320;
 static const int VIDEO_H = 480;
 static const int RAW_BLOCK_LINES = 32;
@@ -1326,6 +1355,7 @@ void playBootIntro() {
 // ============================================================================
 // Each game has its own Preferences namespace so score resets do not affect
 // other games.
+// Tic Tac Toe: persistent wins for X, wins for O, and draws.
 void loadScore() {
   prefs.begin("ttt_score", true);
   scoreX = prefs.getInt("x", 0);
@@ -1349,6 +1379,7 @@ void resetScore() {
   saveScore();
 }
 
+// Rock-Paper-Scissors-Lizard-Spock: persistent P1 wins, P2 wins, and draws.
 void loadRpsScore() {
   prefs.begin("rps_score", true);
   rpsScoreP1 = prefs.getInt("p1", 0);
@@ -1372,6 +1403,7 @@ void resetRpsScore() {
   saveRpsScore();
 }
 
+// Tanks Wars: persistent match wins for Player 1 and Player 2.
 void loadPocketTanksScore() {
   prefs.begin("pt_score", true);
   ptScoreP1 = prefs.getInt("p1", 0);
@@ -1392,6 +1424,7 @@ void resetPocketTanksScore() {
   savePocketTanksScore();
 }
 
+// Breakout: persistent single-player high score.
 void loadBreakoutScore() {
   prefs.begin("breakout", true);
   breakoutHiScore = prefs.getULong("hiscore", 0);
@@ -1409,6 +1442,7 @@ void resetBreakoutScore() {
   saveBreakoutScore();
 }
 
+// Pong: persistent match wins for Player 1 and Player 2.
 void loadPongScore() {
   prefs.begin("pong_score", true);
   pongWinsP1 = prefs.getInt("p1", 0);
@@ -1429,6 +1463,7 @@ void resetPongScore() {
   savePongScore();
 }
 
+// Snake: persistent single-player high score.
 void loadSnakeScore() {
   prefs.begin("snake", true);
   snakeHiScore = prefs.getULong("hiscore", 0);
@@ -1446,6 +1481,7 @@ void resetSnakeScore() {
   saveSnakeScore();
 }
 
+// Ranch Rush: persistent single-player high score.
 void loadRanchRushScore() {
   prefs.begin("ranch", true);
   rrHiScore = prefs.getULong("hiscore_ranch", 0);
@@ -1463,6 +1499,7 @@ void resetRanchRushScore() {
   saveRanchRushScore();
 }
 
+// Frogger: persistent single-player high score.
 void loadFroggerScore() {
   prefs.begin("frogger", true);
   frogHiScore = prefs.getULong("hiscore_frog", 0);
@@ -1480,6 +1517,7 @@ void resetFroggerScore() {
   saveFroggerScore();
 }
 
+// Hex Pipes: persistent best move count and best completion time.
 void loadHexPipesScore() {
   prefs.begin("pipes", true);
   hexPipeBestMoves = prefs.getUInt("best_moves", 0);
@@ -1504,7 +1542,8 @@ void resetHexPipesScore() {
 // NETWORK SETTINGS
 // ============================================================================
 // The four editable text fields are the source of truth while the keypad is
-// open. Saving clamps them to 0..255 and updates HOST_IP.
+// open. Saving clamps them to 0..255 and updates HOST_IP. Settings, Host setup,
+// and Join setup all use this same IP editor.
 void updateHostIpFromParts() {
   HOST_IP = IPAddress(ipParts[0], ipParts[1], ipParts[2], ipParts[3]);
 }
@@ -1584,7 +1623,8 @@ void saveConsoleSettings() {
 // AUDIO
 // ============================================================================
 // Short audio cues and menu music all share the buzzer, so cue tones briefly
-// mute the menu loop instead of fighting it.
+// mute the menu loop instead of fighting it. Menu music is used on non-game
+// pages; SFX is used by every game and menu button.
 struct MenuMusicNote {
   uint16_t freq;
   uint16_t durationMs;
@@ -1739,7 +1779,7 @@ bool readTouchScreen(int &sx, int &sy) {
 // ============================================================================
 // DRAW HELPERS
 // ============================================================================
-// Shared primitive drawing helpers used by every screen.
+// Shared primitive drawing helpers used by every screen and every game.
 uint16_t rgb888to565(uint8_t r, uint8_t g, uint8_t b) {
   return ((r & 0xF8) << 8) |
          ((g & 0xFC) << 3) |
@@ -2032,6 +2072,8 @@ void drawHomeArcadeTitle() {
   gfx->drawCircle(274, 114, 8, RGB565_CYAN);
 }
 
+// Tic Tac Toe menu background. Prefer the SD asset, then fall back to generated
+// arcade art so the game menu still works without the card files.
 void drawTicTacToeArcadeHome() {
   if (sdReady && SD.exists(TTT_BACKGROUND_PATH)) {
     if (drawRaw565ImageFromSD(TTT_BACKGROUND_PATH, 0, 0, screenW, screenH)) {
@@ -2047,6 +2089,7 @@ void drawTicTacToeArcadeHome() {
   drawArcadeTitle();
 }
 
+// Games hub background. Used by every Games page before drawing the game list.
 void drawGamesArcadeBackground() {
   if (sdReady && SD.exists(GAMES_BACKGROUND_PATH)) {
     if (drawRaw565ImageFromSD(GAMES_BACKGROUND_PATH, 0, 0, screenW, screenH)) {
@@ -2061,6 +2104,8 @@ void drawGamesArcadeBackground() {
   drawGamesArcadeTitle();
 }
 
+// Main Home background fallback. Used only when /home_screen RAW assets are
+// missing or the SD card is unavailable.
 void drawHomeArcadeBackground() {
   fillArcadeGradient();
   drawArcadeStars();
@@ -2069,6 +2114,8 @@ void drawHomeArcadeBackground() {
   drawHomeArcadeTitle();
 }
 
+// RPSLS menu background helpers. These draw the fallback Rock-Paper-Scissors
+// game menu when the SD-provided background is not available.
 void drawRpsHomeGradientBackground() {
   for (int y = 0; y < screenH; y++) {
     uint8_t r = map(y, 0, screenH, 5, 0);
@@ -2870,6 +2917,9 @@ void drawTextInRect(int x, int y, int w, int h, const char *label, int textSize,
   gfx->print(label);
 }
 
+// RPSLS fallback wheel drawing. The production wheel is a RAW image from SD,
+// but these generated sectors keep Local and Network choice screens playable if
+// /RPSLS_game/general/rpsls_wheel.raw is missing.
 void drawRpsSegment(int centerX, int centerY, int radius, float startDeg, float endDeg, uint16_t color) {
   const float degToRad = 0.01745329252f;
   float startRad = startDeg * degToRad;
@@ -3092,7 +3142,8 @@ void drawHostSSIDList() {
 // GAME LOGIC
 // ============================================================================
 // Pure game rules and asset-name lookup helpers. These functions do not handle
-// touch routing; they only update game state or answer rule questions.
+// touch routing; they only update game state or answer rule questions. This
+// block starts with Tic Tac Toe rules, then RPSLS rule/result image helpers.
 void clearBoard() {
   for (int r = 0; r < 3; r++) {
     for (int c = 0; c < 3; c++) {
@@ -3268,6 +3319,7 @@ bool drawRpsWinningImage() {
 // GAME DRAWING
 // ============================================================================
 // Rendering helpers for Tic Tac Toe, RPSLS, and Tanks Wars gameplay.
+// Tic Tac Toe: grid, X/O marks, and the score/turn bar.
 void drawX(int cx, int cy) {
   int margin = 20;
 
@@ -3341,6 +3393,7 @@ void drawScoreBar() {
   drawCenteredText(turnLine, 42, 2, (localGame || myTurn) ? RGB565_GREEN : RGB565_YELLOW);
 }
 
+// Tanks Wars: terrain lookup, tank drawing, projectile frames, and controls.
 int getPocketTanksTerrainY(int x) {
   if (x < 0) x = 0;
   if (x >= PT_TERRAIN_W) x = PT_TERRAIN_W - 1;
@@ -3601,6 +3654,7 @@ void drawPocketTanksScene(int projectileX, int projectileY, bool showExplosion, 
 // ============================================================================
 // Screen drawing functions are responsible only for visual layout and setting
 // appState. Touch behavior lives later in the touch routing section.
+// Tic Tac Toe main menu: Local, Host, Join, Reset Score, and Back.
 void drawMenuScreen() {
   activeNetworkGame = NETWORK_GAME_TTT;
   drawTicTacToeArcadeHome();
@@ -3620,6 +3674,7 @@ void drawMenuScreen() {
   drawGameMenuScoreAndHigh(scoreLine, highestOfThree(scoreX, scoreO, scoreDraw));
 }
 
+// Games hub page 1: Tic Tac Toe, RPSLS, Tanks Wars, Home, and More.
 void drawGamesScreen() {
   appState = STATE_GAMES;
   drawGamesArcadeBackground();
@@ -3635,6 +3690,7 @@ void drawGamesScreen() {
   drawTransparentArcadeButton(btnGamesNavRightX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "MORE", 2);
 }
 
+// Games hub page 2: Snake, Breakout, Pong, Ranch Rush, Back, and More.
 void drawGamesMoreScreen() {
   appState = STATE_GAMES_MORE;
   drawGamesArcadeBackground();
@@ -3652,6 +3708,7 @@ void drawGamesMoreScreen() {
   drawTransparentArcadeButton(btnGamesNavRightX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "MORE", 2);
 }
 
+// Games hub page 3: Hex Pipes, Frogger, Back, and Home.
 void drawGamesExtraScreen() {
   appState = STATE_GAMES_EXTRA;
   drawGamesArcadeBackground();
@@ -3665,6 +3722,7 @@ void drawGamesExtraScreen() {
   drawTransparentArcadeButton(btnGamesNavRightX, btnGamesHomeY, btnGamesNavW, btnGamesHomeH, "HOME", 2);
 }
 
+// RPSLS main menu and local/network choice/result screens.
 void drawRpsMenuScreen() {
   activeNetworkGame = NETWORK_GAME_RPS;
   localGame = false;
@@ -4615,6 +4673,11 @@ void drawPongPlaceholderScreen(const char *title) {
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
 }
 
+// ============================================================================
+// SNAKE GAME
+// ============================================================================
+// Snake uses local single-player scoring or host-authoritative network play.
+// Both snakes are visible in network mode, and dirty-cell redraws avoid blink.
 void drawSnakeMenuScreen() {
   activeNetworkGame = NETWORK_GAME_SNAKE;
   localGame = false;
@@ -5371,6 +5434,11 @@ void startSnakeNetworkGame() {
   drawCenteredText("Waiting host", 184, 2, RGB565_YELLOW);
 }
 
+// ============================================================================
+// RANCH RUSH GAME
+// ============================================================================
+// Ranch Rush is a lane-based lasso game. Local mode tracks score/lives; network
+// mode shows both cowboys and syncs animals, lassos, scores, and lives.
 void drawRanchRushMenuScreen() {
   activeNetworkGame = NETWORK_GAME_RANCH_RUSH;
   localGame = false;
@@ -6448,6 +6516,11 @@ void startRanchRushNetworkGame() {
   rrRanchSceneReady = false;
 }
 
+// ============================================================================
+// FROGGER GAME
+// ============================================================================
+// Frogger has local road/river gameplay plus a fast network variant. Both
+// frogs are visible, can share logs, and may overlap without blocking each other.
 uint16_t froggerRowBg(int row) {
   if (row == 0) return rgb888to565(30, 120, 30);
   if (row >= 1 && row <= 3) return rgb888to565(60, 60, 60);
@@ -8287,6 +8360,11 @@ void startFroggerJoinEspNowMode() {
   drawFroggerEspNowWaitingScreen();
 }
 
+// ============================================================================
+// HEX PIPES GAME
+// ============================================================================
+// Hex Pipes is a pipe-rotation puzzle. Local mode tracks best moves/time, while
+// network mode uses the same puzzle seed and compares solve time plus moves.
 bool hexPipesGetNeighbor(int col, int row, int dir, int &ncol, int &nrow) {
   if (col % 2 == 0) {
     ncol = col + HEX_PIPE_DCOL_EVEN[dir];
@@ -8650,6 +8728,7 @@ void drawHexPipesHudValues() {
     gfx->setTextColor(RGB565_YELLOW);
     gfx->setCursor(244, 32);
     gfx->print(timeBuf);
+
     hexPipeLastDrawnMoves = hexPipeMoves;
     hexPipeLastDrawnSec = hexPipeElapsedSec;
     return;
@@ -9038,6 +9117,12 @@ void updateHexPipesGame() {
   }
 }
 
+// ============================================================================
+// TANKS WARS SCREENS
+// ============================================================================
+// User-facing text says "Tanks Wars"; some internal names still use the older
+// PocketTanks/PT prefix. This block draws the Tanks Wars menu, playfield,
+// result, and placeholder screens.
 void drawPocketTanksMenuScreen() {
   activeNetworkGame = NETWORK_GAME_PT;
   localGame = false;
@@ -9448,7 +9533,8 @@ void startHexPipesNetworkGame();
 // ============================================================================
 // NETWORK
 // ============================================================================
-// Shared WiFi setup and message helpers for network-capable games.
+// Shared WiFi setup and message helpers for network-capable games: Tic Tac Toe,
+// RPSLS, Tanks Wars, Breakout, Pong, Snake, Ranch Rush, Frogger, and Hex Pipes.
 const char *getNetworkGameCode() {
   if (activeNetworkGame == NETWORK_GAME_RPS) return "RPS";
   if (activeNetworkGame == NETWORK_GAME_PT) return "PT";
@@ -9812,6 +9898,7 @@ void checkJoinConnection() {
 // ============================================================================
 // Functions in this section change game state in response to validated actions.
 // The touch handlers call these after they decide which button/cell was pressed.
+// RPSLS actions: local hidden choices and TCP exchange of secret choices.
 void startRpsLocalGame() {
   activeNetworkGame = NETWORK_GAME_RPS;
   stopNetwork();
@@ -9915,6 +10002,8 @@ void applyLocalRpsNetworkChoice(int choice) {
   finishRpsNetworkGameIfReady();
 }
 
+// Tanks Wars actions: turn ownership, synced angle/power controls, firing, and
+// terrain reset. User-facing screens call the game "Tanks Wars".
 void updatePocketTanksNetworkTurn() {
   if (activeNetworkGame != NETWORK_GAME_PT || localGame) {
     myTurn = true;
@@ -10204,6 +10293,8 @@ void applyRemotePocketTanksFire(int shooter, int angle, int power) {
   firePocketTanksShot();
 }
 
+// Tic Tac Toe actions: apply local or remote grid moves, update score, and
+// return to the correct game menu after a round or disconnect.
 void finishGame(char result) {
   // Tic Tac Toe round completion and persistent score update.
   gameOver = true;
@@ -10617,6 +10708,7 @@ void pollNetwork() {
 // ============================================================================
 // Each handler belongs to one screen. handleTouch() at the end dispatches by
 // appState, keeping screen-specific hitboxes local to their screen.
+// Tic Tac Toe mode menu touch handling.
 void handleMenuTouch(int x, int y) {
   if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
     activeNetworkGame = NETWORK_GAME_TTT;
@@ -10652,6 +10744,7 @@ void handleMenuTouch(int x, int y) {
   }
 }
 
+// Main Home screen touch handling: Games, Settings, and Exit/reboot.
 void handleHomeTouch(int x, int y) {
   if (inRect(x, y, homeTouchX, homeGamesTouchY, homeTouchW, homeTouchH)) {
     beepClick();
@@ -10675,6 +10768,8 @@ void handleHomeTouch(int x, int y) {
   }
 }
 
+// Games hub page touch handling. Each page opens game menus or navigates between
+// hub pages and Home.
 void handleGamesTouch(int x, int y) {
   if (inRect(x, y, btnGamesX, btnGamesTttY, btnGamesW, btnGamesH)) {
     beepClick();
@@ -10780,6 +10875,7 @@ void handleEmptyGameTouch(int x, int y) {
   }
 }
 
+// Tanks Wars menu, placeholder, gameplay, and result touch handling.
 void handlePocketTanksMenuTouch(int x, int y) {
   if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
     startPocketTanksLocalGame();
@@ -10822,6 +10918,7 @@ void handlePocketTanksPlaceholderTouch(int x, int y) {
   }
 }
 
+// Breakout menu, placeholder, and gameplay touch handling.
 void handleBreakoutMenuTouch(int x, int y) {
   if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
     startBreakoutLocalGame();
@@ -10886,6 +10983,7 @@ void handleBreakoutPlayingTouch(int x, int y) {
   }
 }
 
+// Pong menu, placeholder, and gameplay touch handling.
 void handlePongMenuTouch(int x, int y) {
   if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
     startPongLocalGame();
@@ -10928,6 +11026,7 @@ void handlePongPlaceholderTouch(int x, int y) {
   }
 }
 
+// Snake menu, placeholder, and gameplay touch handling.
 void handleSnakeMenuTouch(int x, int y) {
   if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
     startSnakeLocalGame();
@@ -10976,6 +11075,7 @@ void handleSnakePlaceholderTouch(int x, int y) {
   }
 }
 
+// Ranch Rush menu, placeholder, and gameplay touch handling.
 void handleRanchRushMenuTouch(int x, int y) {
   if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
     startRanchRushLocalGame();
@@ -11071,6 +11171,7 @@ void handleRanchRushPlayingTouch(int x, int y) {
   }
 }
 
+// Frogger menu, placeholder, and gameplay touch handling.
 void handleFroggerMenuTouch(int x, int y) {
   if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
     startFroggerLocalGame();
@@ -11174,6 +11275,7 @@ void handleFroggerPlayingTouch(int x, int y) {
   }
 }
 
+// Hex Pipes menu, placeholder, board, and solved/result touch handling.
 void handleHexPipesMenuTouch(int x, int y) {
   if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
     startHexPipesLocalGame();
@@ -11492,6 +11594,7 @@ void handlePocketTanksResultTouch(int x, int y) {
   }
 }
 
+// RPSLS menu, wheel choice, waiting, result, and placeholder touch handling.
 void handleRpsMenuTouch(int x, int y) {
   if (inRect(x, y, btnLocalX, btnLocalY, btnLocalW, btnLocalH)) {
     startRpsLocalGame();
@@ -11646,6 +11749,8 @@ void handleIpKeypadAction(int keyIndex) {
   }
 }
 
+// Settings touch handling. The main Settings page splits into Music/SFX and
+// WiFi/IP configuration subpages.
 void handleSettingsTouch(int x, int y) {
   if (inRect(x, y, btnSettingsMusicX, btnSettingsMusicY, btnSettingsMusicW, btnSettingsMusicH)) {
     beepClick();
@@ -11771,6 +11876,8 @@ void handleWifiSettingsTouch(int x, int y) {
   }
 }
 
+// Shared Join setup touch handling. Used by every TCP network game before the
+// selected game-specific start function runs.
 void handleJoinSetupTouch(int x, int y) {
   // Join page 1: select a WiFi network, rescan, page through results, or go NEXT.
   for (int i = 0; i < MAX_JOIN_NETWORKS_VISIBLE; i++) {
@@ -11872,6 +11979,8 @@ void handleJoinIpTouch(int x, int y) {
   }
 }
 
+// Shared Host setup touch handling. Used by every TCP network game before the
+// selected game-specific start function runs.
 void handleHostSetupTouch(int x, int y) {
   // Host page 1: select the softAP SSID from the curated list.
   for (int i = 0; i < MAX_HOST_SSID_VISIBLE; i++) {
@@ -11957,6 +12066,8 @@ void handleHostIpTouch(int x, int y) {
   }
 }
 
+// Shared waiting screens for Host and Join. BACK cancels the network setup and
+// returns to the active game menu.
 void handleWaitingTouch(int x, int y) {
   if (inRect(x, y, btnMenuX, btnMenuY, btnMenuW, btnMenuH)) {
     beepClick();
@@ -11964,6 +12075,8 @@ void handleWaitingTouch(int x, int y) {
   }
 }
 
+// Tic Tac Toe in-game touch handling. Other games have their own PLAYING states
+// and handlers above.
 void handlePlayingTouch(int x, int y) {
   if (inRect(x, y, btnMenuX, btnMenuY, btnMenuW, btnMenuH)) {
     beepClick();
@@ -11974,6 +12087,7 @@ void handlePlayingTouch(int x, int y) {
   handleBoardTouch(x, y);
 }
 
+// Tic Tac Toe result touch handling.
 void handleResultTouch(int x, int y) {
   if (inRect(x, y, btnPlayAgainX, btnPlayAgainY, btnPlayAgainW, btnPlayAgainH)) {
     if (localGame) {
@@ -12098,6 +12212,7 @@ void setup() {
   delay(1000);
   randomSeed(esp_random());
 
+  // Hardware startup: buzzer, LCD reset, touch reset, I2C bus, display, and SD.
   pinMode(PIN_BUZZER, OUTPUT);
 
   pinMode(PIN_LCD_RST, OUTPUT);
@@ -12149,6 +12264,8 @@ void setup() {
     }
   }
 
+  // Persistent data startup: scores for every game plus shared console/network
+  // settings. Hex Pipes geometry is precomputed once because it never changes.
   loadScore();
   loadRpsScore();
   loadPocketTanksScore();
@@ -12168,6 +12285,8 @@ void setup() {
 }
 
 void loop() {
+  // Network polling is non-blocking so menu touch, game animation, and TCP/ESP-NOW
+  // traffic can all progress in the same main loop.
   checkHostClient();
   checkJoinConnection();
   pollNetwork();
@@ -12176,6 +12295,7 @@ void loop() {
   int tx, ty;
   bool touched = readTouchScreen(tx, ty);
 
+  // Breakout and Pong need continuous touch position for paddle control.
   breakoutTouchDown = touched;
   if (touched) {
     breakoutTouchX = tx;
@@ -12208,6 +12328,8 @@ void loop() {
     touchWasDown = false;
   }
 
+  // Menu music only runs outside gameplay; game update calls are internally
+  // gated by appState, so inactive games return immediately.
   updateMenuMusic();
 
   updateBreakoutGame();
