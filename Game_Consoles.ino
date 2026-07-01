@@ -1,6 +1,9 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 9.2 - 2026-07-01 19:54 - Added network Hex Pipes gameplay with a
+// shared puzzle seed, visible P1/P2 move counters, solve-time race logic, and
+// less-moves tie breaker.
 // Version 9.1 - 2026-07-01 16:17 - Added Hex Pipes to the Games menu with a
 // dedicated game menu, hexapipes.vercel.app reference, local playable puzzle,
 // best-score storage, and Host/Join placeholders.
@@ -228,8 +231,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 9.1";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V91-2026070116";
+const char *APP_VERSION_TEXT = "Version 9.2";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V92-2026070119";
 
 
 
@@ -794,6 +797,22 @@ uint32_t hexPipeBestTimeSec = 0;
 unsigned long hexPipeStartTime = 0;
 unsigned long hexPipeSolvedAt = 0;
 const char *hexPipesPlaceholderTitle = "HEX PIPES";
+unsigned long hexPipeNetworkSeed = 1;
+int hexPipePlayerMoves[2] = {0, 0};
+int hexPipePlayerTime[2] = {0, 0};
+bool hexPipePlayerSolved[2] = {false, false};
+int hexPipeSolveMoves[2] = {0, 0};
+int hexPipeSolveTime[2] = {0, 0};
+bool hexPipeNetworkGameOver = false;
+bool hexPipePendingResult = false;
+unsigned long hexPipePendingResultSince = 0;
+int hexPipeWinner = 0;
+int hexPipeLastSentMoves = -1;
+int hexPipeLastSentSec = -1;
+
+int hexPipesLocalPlayerIndex();
+void prepareHexPipesNetworkSeed();
+void sendNetMessage(const String &msg);
 
 // Frogger uses ESP-NOW for Host/Join because it needs fast symmetric movement:
 // each console simulates its own frog and only broadcasts compact events/state.
@@ -8391,9 +8410,29 @@ void drawHexPipesPlaceholderScreen(const char *title) {
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
 }
 
-void generateHexPipesPuzzle() {
+uint32_t hexPipesNextRandom(uint32_t &state, int maxValue) {
+  state = state * 1664525UL + 1013904223UL;
+
+  if (maxValue <= 0) {
+    return 0;
+  }
+
+  return (state >> 16) % (uint32_t)maxValue;
+}
+
+int hexPipesRandomRange(int maxValue, uint32_t *state) {
+  if (state) {
+    return (int)hexPipesNextRandom(*state, maxValue);
+  }
+
+  return random(0, maxValue);
+}
+
+void generateHexPipesPuzzleWithSeed(unsigned long seed) {
   uint8_t solMask[HEX_PIPE_ROWS][HEX_PIPE_COLS];
   bool visited[HEX_PIPE_ROWS][HEX_PIPE_COLS];
+  uint32_t seededState = (uint32_t)seed;
+  uint32_t *rngState = (seed > 0) ? &seededState : nullptr;
 
   for (int row = 0; row < HEX_PIPE_ROWS; row++) {
     for (int col = 0; col < HEX_PIPE_COLS; col++) {
@@ -8427,7 +8466,7 @@ void generateHexPipesPuzzle() {
       continue;
     }
 
-    int dir = candidates[random(0, count)];
+    int dir = candidates[hexPipesRandomRange(count, rngState)];
     int ncol, nrow;
     hexPipesGetNeighbor(col, row, dir, ncol, nrow);
 
@@ -8442,7 +8481,7 @@ void generateHexPipesPuzzle() {
   for (int row = 0; row < HEX_PIPE_ROWS; row++) {
     for (int col = 0; col < HEX_PIPE_COLS; col++) {
       uint8_t mask = solMask[row][col];
-      int turns = random(0, 6);
+      int turns = hexPipesRandomRange(6, rngState);
 
       for (int i = 0; i < turns; i++) {
         mask = rotateHexPipeCW(mask);
@@ -8451,6 +8490,10 @@ void generateHexPipesPuzzle() {
       hexPipeMask[row][col] = mask;
     }
   }
+}
+
+void generateHexPipesPuzzle() {
+  generateHexPipesPuzzleWithSeed(0);
 }
 
 bool hexPipesSolved() {
@@ -8562,12 +8605,24 @@ void drawHexPipesHud() {
 
   gfx->setTextSize(1);
   gfx->setTextColor(RGB565_WHITE);
-  gfx->setCursor(8, 32);
-  gfx->print("Moves:");
-  gfx->setCursor(90, 32);
-  gfx->print("Time:");
-  gfx->setCursor(180, 32);
-  gfx->print("Best:");
+
+  if (!localGame) {
+    gfx->setCursor(8, 32);
+    gfx->print("P1:");
+    gfx->setCursor(78, 32);
+    gfx->print("P2:");
+    gfx->setCursor(148, 32);
+    gfx->print((myPlayer == '1') ? "YOU:P1" : "YOU:P2");
+    gfx->setCursor(230, 32);
+    gfx->print("T:");
+  } else {
+    gfx->setCursor(8, 32);
+    gfx->print("Moves:");
+    gfx->setCursor(90, 32);
+    gfx->print("Time:");
+    gfx->setCursor(180, 32);
+    gfx->print("Best:");
+  }
 
   hexPipeLastDrawnMoves = -1;
   hexPipeLastDrawnSec = -1;
@@ -8575,6 +8630,30 @@ void drawHexPipesHud() {
 
 void drawHexPipesHudValues() {
   uint16_t hudBg = rgb888to565(15, 15, 35);
+
+  if (!localGame) {
+    char timeBuf[8];
+    snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", hexPipeElapsedSec / 60, hexPipeElapsedSec % 60);
+
+    gfx->fillRect(28, 30, 42, 12, hudBg);
+    gfx->setTextColor((myPlayer == '1') ? RGB565_GREEN : RGB565_CYAN);
+    gfx->setTextSize(1);
+    gfx->setCursor(28, 32);
+    gfx->print(hexPipePlayerMoves[0]);
+
+    gfx->fillRect(98, 30, 42, 12, hudBg);
+    gfx->setTextColor((myPlayer == '2') ? RGB565_GREEN : RGB565_CYAN);
+    gfx->setCursor(98, 32);
+    gfx->print(hexPipePlayerMoves[1]);
+
+    gfx->fillRect(244, 30, 56, 12, hudBg);
+    gfx->setTextColor(RGB565_YELLOW);
+    gfx->setCursor(244, 32);
+    gfx->print(timeBuf);
+    hexPipeLastDrawnMoves = hexPipeMoves;
+    hexPipeLastDrawnSec = hexPipeElapsedSec;
+    return;
+  }
 
   if (hexPipeMoves != hexPipeLastDrawnMoves) {
     gfx->fillRect(46, 30, 38, 12, hudBg);
@@ -8624,7 +8703,58 @@ void drawHexPipesGameButtons() {
              RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
 }
 
+void drawHexPipesNetworkResultScreen() {
+  gfx->fillRoundRect(24, 118, 272, 246, 10, rgb888to565(15, 15, 35));
+  gfx->drawRoundRect(24, 118, 272, 246, 10, RGB565_CYAN);
+  gfx->drawRoundRect(30, 124, 260, 234, 8, RGB565_GREEN);
+
+  int localPlayerNumber = hexPipesLocalPlayerIndex() + 1;
+
+  if (hexPipeWinner == 3) {
+    drawCenteredText("DRAW", 144, 3, RGB565_YELLOW);
+  } else if (hexPipeWinner == localPlayerNumber) {
+    drawCenteredText("YOU WIN!", 144, 3, RGB565_GREEN);
+  } else {
+    drawCenteredText("YOU LOSE", 144, 3, RGB565_RED);
+  }
+
+  char line[48];
+  if (hexPipePlayerSolved[0]) {
+    snprintf(line, sizeof(line), "P1: %d mv  %02d:%02d",
+             hexPipeSolveMoves[0],
+             hexPipeSolveTime[0] / 60,
+             hexPipeSolveTime[0] % 60);
+  } else {
+    snprintf(line, sizeof(line), "P1: not solved");
+  }
+  drawCenteredText(line, 206, 2, RGB565_WHITE);
+
+  if (hexPipePlayerSolved[1]) {
+    snprintf(line, sizeof(line), "P2: %d mv  %02d:%02d",
+             hexPipeSolveMoves[1],
+             hexPipeSolveTime[1] / 60,
+             hexPipeSolveTime[1] % 60);
+  } else {
+    snprintf(line, sizeof(line), "P2: not solved");
+  }
+  drawCenteredText(line, 238, 2, RGB565_WHITE);
+
+  if (hexPipeWinner == 3) {
+    drawCenteredText("Same time and moves", 278, 1, RGB565_YELLOW);
+  } else {
+    drawCenteredText("Same time uses moves", 278, 1, RGB565_YELLOW);
+  }
+
+  drawButton(44, 308, 108, 36, RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "PLAY", 2);
+  drawButton(168, 308, 108, 36, RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
+}
+
 void drawHexPipesSolvedScreen() {
+  if (!localGame) {
+    drawHexPipesNetworkResultScreen();
+    return;
+  }
+
   bool newBest = false;
 
   if (hexPipeBestMoves == 0 || (uint32_t)hexPipeMoves < hexPipeBestMoves) {
@@ -8660,10 +8790,178 @@ void drawHexPipesSolvedScreen() {
   drawButton(168, 308, 108, 36, RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MENU", 2);
 }
 
+int hexPipesLocalPlayerIndex() {
+  return (myPlayer == '2') ? 1 : 0;
+}
+
+void resetHexPipesNetworkRaceState() {
+  hexPipeMoves = 0;
+  hexPipeElapsedSec = 0;
+  hexPipeLastDrawnMoves = -1;
+  hexPipeLastDrawnSec = -1;
+  hexPipePlayerMoves[0] = 0;
+  hexPipePlayerMoves[1] = 0;
+  hexPipePlayerTime[0] = 0;
+  hexPipePlayerTime[1] = 0;
+  hexPipePlayerSolved[0] = false;
+  hexPipePlayerSolved[1] = false;
+  hexPipeSolveMoves[0] = 0;
+  hexPipeSolveMoves[1] = 0;
+  hexPipeSolveTime[0] = 0;
+  hexPipeSolveTime[1] = 0;
+  hexPipeNetworkGameOver = false;
+  hexPipePendingResult = false;
+  hexPipePendingResultSince = 0;
+  hexPipeWinner = 0;
+  hexPipeLastSentMoves = -1;
+  hexPipeLastSentSec = -1;
+}
+
+void updateHexPipesBestFromSolve(int moves, int elapsedSec) {
+  bool newBest = false;
+
+  if (hexPipeBestMoves == 0 || (uint32_t)moves < hexPipeBestMoves) {
+    hexPipeBestMoves = moves;
+    newBest = true;
+  }
+
+  if (hexPipeBestTimeSec == 0 || (uint32_t)elapsedSec < hexPipeBestTimeSec) {
+    hexPipeBestTimeSec = elapsedSec;
+    newBest = true;
+  }
+
+  if (newBest) {
+    saveHexPipesScore();
+  }
+}
+
+void sendHexPipesProgress(bool solved) {
+  if (localGame || !networkConnected) return;
+
+  int playerIndex = hexPipesLocalPlayerIndex();
+  String msg = "HEX_STATE:";
+  msg += String(playerIndex);
+  msg += ",";
+  msg += String(hexPipeMoves);
+  msg += ",";
+  msg += String(hexPipeElapsedSec);
+  msg += ",";
+  msg += String(solved ? 1 : 0);
+  sendNetMessage(msg);
+
+  hexPipeLastSentMoves = hexPipeMoves;
+  hexPipeLastSentSec = hexPipeElapsedSec;
+}
+
+void resolveHexPipesNetworkResult() {
+  if (hexPipeNetworkGameOver) return;
+  if (!hexPipePlayerSolved[0] && !hexPipePlayerSolved[1]) return;
+
+  if (hexPipePlayerSolved[0] && hexPipePlayerSolved[1]) {
+    if (hexPipeSolveTime[0] < hexPipeSolveTime[1]) {
+      hexPipeWinner = 1;
+    } else if (hexPipeSolveTime[1] < hexPipeSolveTime[0]) {
+      hexPipeWinner = 2;
+    } else if (hexPipeSolveMoves[0] < hexPipeSolveMoves[1]) {
+      hexPipeWinner = 1;
+    } else if (hexPipeSolveMoves[1] < hexPipeSolveMoves[0]) {
+      hexPipeWinner = 2;
+    } else {
+      hexPipeWinner = 3;
+    }
+  } else {
+    hexPipeWinner = hexPipePlayerSolved[0] ? 1 : 2;
+  }
+
+  hexPipeNetworkGameOver = true;
+  hexPipePendingResult = false;
+  appState = STATE_HEX_PIPES_SOLVED;
+  hexPipeSolvedAt = millis();
+
+  int localPlayerNumber = hexPipesLocalPlayerIndex() + 1;
+  if (hexPipeWinner == 3) {
+    beepDraw();
+  } else if (hexPipeWinner == localPlayerNumber) {
+    beepWin();
+  } else {
+    beepClick();
+  }
+
+  drawHexPipesSolvedScreen();
+}
+
+void scheduleHexPipesNetworkResultCheck() {
+  if (hexPipeNetworkGameOver) return;
+
+  if (hexPipePlayerSolved[0] && hexPipePlayerSolved[1]) {
+    resolveHexPipesNetworkResult();
+    return;
+  }
+
+  if (hexPipePlayerSolved[0] || hexPipePlayerSolved[1]) {
+    if (!hexPipePendingResult) {
+      hexPipePendingResult = true;
+      hexPipePendingResultSince = millis();
+    }
+  }
+}
+
+void applyRemoteHexPipesState(String payload) {
+  int start = 0;
+  int playerIndex;
+  int moves;
+  int elapsedSec;
+  int solvedValue;
+
+  if (!readCsvInt(payload, start, playerIndex)) return;
+  if (!readCsvInt(payload, start, moves)) return;
+  if (!readCsvInt(payload, start, elapsedSec)) return;
+  if (!readCsvInt(payload, start, solvedValue)) return;
+  if (playerIndex < 0 || playerIndex > 1) return;
+
+  hexPipePlayerMoves[playerIndex] = moves;
+  hexPipePlayerTime[playerIndex] = elapsedSec;
+
+  if (solvedValue && !hexPipePlayerSolved[playerIndex]) {
+    hexPipePlayerSolved[playerIndex] = true;
+    hexPipeSolveMoves[playerIndex] = moves;
+    hexPipeSolveTime[playerIndex] = elapsedSec;
+    scheduleHexPipesNetworkResultCheck();
+  }
+
+  if (appState == STATE_HEX_PIPES_PLAYING || appState == STATE_HEX_PIPES_SOLVED) {
+    drawHexPipesHudValues();
+  }
+}
+
+void finishHexPipesNetworkSolve() {
+  int playerIndex = hexPipesLocalPlayerIndex();
+
+  if (hexPipePlayerSolved[playerIndex]) return;
+
+  hexPipePlayerSolved[playerIndex] = true;
+  hexPipePlayerMoves[playerIndex] = hexPipeMoves;
+  hexPipePlayerTime[playerIndex] = hexPipeElapsedSec;
+  hexPipeSolveMoves[playerIndex] = hexPipeMoves;
+  hexPipeSolveTime[playerIndex] = hexPipeElapsedSec;
+  updateHexPipesBestFromSolve(hexPipeMoves, hexPipeElapsedSec);
+  sendHexPipesProgress(true);
+  drawHexPipesHudValues();
+
+  gfx->fillRoundRect(46, 178, 228, 92, 10, rgb888to565(15, 15, 35));
+  gfx->drawRoundRect(46, 178, 228, 92, 10, RGB565_GREEN);
+  drawCenteredText("SOLVED!", 204, 3, RGB565_GREEN);
+  drawCenteredText("Waiting opponent", 244, 1, RGB565_YELLOW);
+
+  scheduleHexPipesNetworkResultCheck();
+}
+
 void startHexPipesLocalGame() {
   activeNetworkGame = NETWORK_GAME_HEX_PIPES;
   stopNetwork();
   localGame = true;
+  hexPipeNetworkGameOver = false;
+  hexPipePendingResult = false;
   appState = STATE_HEX_PIPES_PLAYING;
   hexPipeMoves = 0;
   hexPipeElapsedSec = 0;
@@ -8678,7 +8976,35 @@ void startHexPipesLocalGame() {
   beepStart();
 }
 
+void startHexPipesNetworkGame() {
+  activeNetworkGame = NETWORK_GAME_HEX_PIPES;
+  localGame = false;
+  myTurn = true;
+
+  if (hexPipeNetworkSeed == 0) {
+    prepareHexPipesNetworkSeed();
+  }
+
+  resetHexPipesNetworkRaceState();
+  appState = STATE_HEX_PIPES_PLAYING;
+  hexPipeStartTime = millis();
+
+  generateHexPipesPuzzleWithSeed(hexPipeNetworkSeed);
+  gfx->fillScreen(RGB565_BLACK);
+  drawHexPipesHud();
+  drawHexPipesBoard();
+  drawHexPipesHudValues();
+  drawHexPipesGameButtons();
+  sendHexPipesProgress(false);
+  beepStart();
+}
+
 void finishHexPipesGame() {
+  if (!localGame) {
+    finishHexPipesNetworkSolve();
+    return;
+  }
+
   appState = STATE_HEX_PIPES_SOLVED;
   hexPipeSolvedAt = millis();
   beepWin();
@@ -8693,6 +9019,22 @@ void updateHexPipesGame() {
   if (elapsed != hexPipeElapsedSec) {
     hexPipeElapsedSec = elapsed;
     drawHexPipesHudValues();
+
+    if (!localGame && !hexPipeNetworkGameOver) {
+      int playerIndex = hexPipesLocalPlayerIndex();
+
+      if (!hexPipePlayerSolved[playerIndex] &&
+          (hexPipeMoves != hexPipeLastSentMoves || hexPipeElapsedSec != hexPipeLastSentSec)) {
+        hexPipePlayerMoves[playerIndex] = hexPipeMoves;
+        hexPipePlayerTime[playerIndex] = hexPipeElapsedSec;
+        sendHexPipesProgress(false);
+      }
+    }
+  }
+
+  if (!localGame && hexPipePendingResult &&
+      millis() - hexPipePendingResultSince > 1500) {
+    resolveHexPipesNetworkResult();
   }
 }
 
@@ -8768,6 +9110,7 @@ void drawWaitingHostScreen() {
   bool snakeNetworkGame = (activeNetworkGame == NETWORK_GAME_SNAKE);
   bool ranchNetworkGame = (activeNetworkGame == NETWORK_GAME_RANCH_RUSH);
   bool froggerNetworkGame = (activeNetworkGame == NETWORK_GAME_FROGGER);
+  bool hexPipesNetworkGame = (activeNetworkGame == NETWORK_GAME_HEX_PIPES);
 
   gfx->fillScreen(RGB565_BLACK);
 
@@ -8779,6 +9122,8 @@ void drawWaitingHostScreen() {
     drawCenteredText("RANCH HOST", 28, 3, RGB565_GREEN);
   } else if (froggerNetworkGame) {
     drawCenteredText("FROG HOST", 28, 3, RGB565_GREEN);
+  } else if (hexPipesNetworkGame) {
+    drawCenteredText("HEX HOST", 28, 3, RGB565_GREEN);
   } else if (breakoutNetworkGame) {
     drawCenteredText("BREAKOUT HOST", 28, 2, RGB565_GREEN);
   } else if (tanksNetworkGame) {
@@ -8787,7 +9132,7 @@ void drawWaitingHostScreen() {
     drawCenteredText(rpsNetworkGame ? "RPS HOST" : "HOST ACTIVE", 28, 3, RGB565_GREEN);
   }
 
-  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame || froggerNetworkGame) ? "You are P1" : "You are X", 72, 2, RGB565_WHITE);
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame || froggerNetworkGame || hexPipesNetworkGame) ? "You are P1" : "You are X", 72, 2, RGB565_WHITE);
 
   drawCenteredText("Waiting opponent", 118, 2, RGB565_YELLOW);
   drawCenteredText("to join", 145, 2, RGB565_YELLOW);
@@ -8813,6 +9158,7 @@ void drawConnectingJoinScreen() {
   bool snakeNetworkGame = (activeNetworkGame == NETWORK_GAME_SNAKE);
   bool ranchNetworkGame = (activeNetworkGame == NETWORK_GAME_RANCH_RUSH);
   bool froggerNetworkGame = (activeNetworkGame == NETWORK_GAME_FROGGER);
+  bool hexPipesNetworkGame = (activeNetworkGame == NETWORK_GAME_HEX_PIPES);
 
   gfx->fillScreen(RGB565_BLACK);
 
@@ -8824,6 +9170,8 @@ void drawConnectingJoinScreen() {
     drawCenteredText("RANCH JOIN", 70, 3, RGB565_BLUE);
   } else if (froggerNetworkGame) {
     drawCenteredText("FROG JOIN", 70, 3, RGB565_BLUE);
+  } else if (hexPipesNetworkGame) {
+    drawCenteredText("HEX JOIN", 70, 3, RGB565_BLUE);
   } else if (breakoutNetworkGame) {
     drawCenteredText("BREAKOUT JOIN", 70, 2, RGB565_BLUE);
   } else if (tanksNetworkGame) {
@@ -8832,7 +9180,7 @@ void drawConnectingJoinScreen() {
     drawCenteredText(rpsNetworkGame ? "RPS JOIN" : "JOIN", 70, 3, RGB565_BLUE);
   }
 
-  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame || froggerNetworkGame) ? "You are P2" : "You are O", 120, 2, RGB565_WHITE);
+  drawCenteredText((rpsNetworkGame || tanksNetworkGame || breakoutNetworkGame || pongNetworkGame || snakeNetworkGame || ranchNetworkGame || froggerNetworkGame || hexPipesNetworkGame) ? "You are P2" : "You are O", 120, 2, RGB565_WHITE);
 
   drawCenteredText("Connecting...", 190, 2, RGB565_YELLOW);
 
@@ -9095,6 +9443,7 @@ void startPongNetworkGame();
 void startSnakeNetworkGame();
 void startRanchRushNetworkGame();
 void startFroggerNetworkGame();
+void startHexPipesNetworkGame();
 
 // ============================================================================
 // NETWORK
@@ -9144,6 +9493,14 @@ void applyNetworkGameCode(const String &code) {
     activeNetworkGame = NETWORK_GAME_FROGGER;
   } else if (gameCode == "HEX") {
     activeNetworkGame = NETWORK_GAME_HEX_PIPES;
+
+    if (separator >= 0) {
+      unsigned long receivedSeed = (unsigned long)code.substring(separator + 1).toInt();
+
+      if (receivedSeed > 0) {
+        hexPipeNetworkSeed = receivedSeed;
+      }
+    }
   } else if (gameCode == "TTT") {
     activeNetworkGame = NETWORK_GAME_TTT;
   }
@@ -9154,6 +9511,14 @@ void preparePocketTanksNetworkSeed() {
 
   if (ptNetworkSeed == 0) {
     ptNetworkSeed = 1;
+  }
+}
+
+void prepareHexPipesNetworkSeed() {
+  hexPipeNetworkSeed = (unsigned long)random(1, 2000000000L);
+
+  if (hexPipeNetworkSeed == 0) {
+    hexPipeNetworkSeed = 1;
   }
 }
 
@@ -9170,6 +9535,16 @@ String buildNetworkMessage(const char *prefix) {
 
     msg += ":";
     msg += String(ptNetworkSeed);
+  }
+
+  if (activeNetworkGame == NETWORK_GAME_HEX_PIPES &&
+      (strcmp(prefix, "START") == 0 || strcmp(prefix, "NEW") == 0)) {
+    if (strcmp(prefix, "NEW") == 0 || hexPipeNetworkSeed == 0) {
+      prepareHexPipesNetworkSeed();
+    }
+
+    msg += ":";
+    msg += String(hexPipeNetworkSeed);
   }
 
   return msg;
@@ -9285,7 +9660,8 @@ void beginHostNetwork() {
             activeNetworkGame == NETWORK_GAME_PONG ||
             activeNetworkGame == NETWORK_GAME_SNAKE ||
             activeNetworkGame == NETWORK_GAME_RANCH_RUSH ||
-            activeNetworkGame == NETWORK_GAME_FROGGER);
+            activeNetworkGame == NETWORK_GAME_FROGGER ||
+            activeNetworkGame == NETWORK_GAME_HEX_PIPES);
 
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(HOST_IP, HOST_IP, IPAddress(255, 255, 255, 0));
@@ -9381,7 +9757,7 @@ void startNetworkGame() {
   }
 
   if (activeNetworkGame == NETWORK_GAME_HEX_PIPES) {
-    drawHexPipesPlaceholderScreen("HEX PIPES NETWORK");
+    startHexPipesNetworkGame();
     return;
   }
 
@@ -9406,6 +9782,10 @@ void checkHostClient() {
 
     if (activeNetworkGame == NETWORK_GAME_PT) {
       preparePocketTanksNetworkSeed();
+    }
+
+    if (activeNetworkGame == NETWORK_GAME_HEX_PIPES) {
+      prepareHexPipesNetworkSeed();
     }
 
     sendNetMessage(buildNetworkMessage("START"));
@@ -10137,6 +10517,12 @@ void handleNetMessage(String msg) {
     return;
   }
 
+  if (msg.startsWith("HEX_STATE:")) {
+    activeNetworkGame = NETWORK_GAME_HEX_PIPES;
+    applyRemoteHexPipesState(msg.substring(10));
+    return;
+  }
+
   if (msg.startsWith("PT_ANGLE:")) {
     int comma = msg.indexOf(',');
 
@@ -10207,7 +10593,10 @@ void pollNetwork() {
         appState == STATE_RR_PLAYING ||
         appState == STATE_RR_PLACEHOLDER ||
         appState == STATE_FROGGER_PLAYING ||
-        appState == STATE_FROGGER_PLACEHOLDER) {
+        appState == STATE_FROGGER_PLACEHOLDER ||
+        appState == STATE_HEX_PIPES_PLAYING ||
+        appState == STATE_HEX_PIPES_SOLVED ||
+        appState == STATE_HEX_PIPES_PLACEHOLDER) {
       gfx->fillScreen(RGB565_BLACK);
       drawCenteredText("Connection lost", 180, 2, RGB565_RED);
       delay(1200);
@@ -10792,14 +11181,16 @@ void handleHexPipesMenuTouch(int x, int y) {
   }
 
   if (inRect(x, y, btnHostX, btnHostY, btnHostW, btnHostH)) {
-    beepClick();
-    drawHexPipesPlaceholderScreen("HEX PIPES HOST");
+    activeNetworkGame = NETWORK_GAME_HEX_PIPES;
+    beepStart();
+    startHostMode();
     return;
   }
 
   if (inRect(x, y, btnJoinX, btnJoinY, btnJoinW, btnJoinH)) {
-    beepClick();
-    drawHexPipesPlaceholderScreen("HEX PIPES JOIN");
+    activeNetworkGame = NETWORK_GAME_HEX_PIPES;
+    beepStart();
+    startJoinMode();
     return;
   }
 
@@ -10829,17 +11220,38 @@ void handleHexPipesPlayingTouch(int x, int y) {
   if (y >= HEX_PIPE_BTN_TOP) {
     if (inRect(x, y, 20, HEX_PIPE_BTN_TOP + 6, 130, 34)) {
       beepStart();
-      startHexPipesLocalGame();
+
+      if (!localGame) {
+        sendNetMessage(buildNetworkMessage("NEW"));
+        startNetworkGame();
+      } else {
+        startHexPipesLocalGame();
+      }
+
       return;
     }
 
     if (inRect(x, y, 170, HEX_PIPE_BTN_TOP + 6, 130, 34)) {
       beepClick();
-      drawHexPipesMenuScreen();
+
+      if (!localGame) {
+        returnToMenu(true);
+      } else {
+        drawHexPipesMenuScreen();
+      }
+
       return;
     }
 
     return;
+  }
+
+  if (!localGame) {
+    int playerIndex = hexPipesLocalPlayerIndex();
+
+    if (hexPipeNetworkGameOver || hexPipePlayerSolved[playerIndex]) {
+      return;
+    }
   }
 
   float hitRadiusSq = (HEX_PIPE_R * 0.95f) * (HEX_PIPE_R * 0.95f);
@@ -10854,6 +11266,14 @@ void handleHexPipesPlayingTouch(int x, int y) {
         hexPipeMoves++;
         beepMove();
         redrawHexPipeCellAndNeighbors(col, row);
+
+        if (!localGame) {
+          int playerIndex = hexPipesLocalPlayerIndex();
+          hexPipePlayerMoves[playerIndex] = hexPipeMoves;
+          hexPipePlayerTime[playerIndex] = hexPipeElapsedSec;
+          sendHexPipesProgress(false);
+        }
+
         drawHexPipesHudValues();
 
         if (hexPipesSolved()) {
@@ -10871,13 +11291,26 @@ void handleHexPipesSolvedTouch(int x, int y) {
 
   if (inRect(x, y, 44, 308, 108, 36)) {
     beepStart();
-    startHexPipesLocalGame();
+
+    if (!localGame) {
+      sendNetMessage(buildNetworkMessage("NEW"));
+      startNetworkGame();
+    } else {
+      startHexPipesLocalGame();
+    }
+
     return;
   }
 
   if (inRect(x, y, 168, 308, 108, 36)) {
     beepClick();
-    drawHexPipesMenuScreen();
+
+    if (!localGame) {
+      returnToMenu(true);
+    } else {
+      drawHexPipesMenuScreen();
+    }
+
     return;
   }
 }
