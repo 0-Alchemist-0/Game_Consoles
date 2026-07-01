@@ -204,15 +204,15 @@ Each game has a score reset option in its game menu. High score or score data is
 stored in ESP32 flash with separate `Preferences` namespaces per game.
 
 <p align="center">
-  <img src="Game_Consoles/Pics%26Videos/Games/0001_TicTacToe.jpeg" width="250">
-  <img src="Game_Consoles/Pics%26Videos/Games/0002_RPSLS.jpeg" width="250">
-  <img src="Game_Consoles/Pics%26Videos/Games/0003_Tanks.jpeg" width="250">
-  <img src="Game_Consoles/Pics%26Videos/Games/0004_Snake.jpeg" width="250">
-  <img src="Game_Consoles/Pics%26Videos/Games/0005_Breakout.jpeg" width="250">
-  <img src="Game_Consoles/Pics%26Videos/Games/0006_Pong.jpeg" width="250">
-  <img src="Game_Consoles/Pics%26Videos/Games/0007_RanchRush.jpeg" width="250">
-  <img src="Game_Consoles/Pics%26Videos/Games/0008_HexPipes.jpeg" width="250">
-  <img src="Game_Consoles/Pics%26Videos/Games/0009_Frogger.jpeg" width="250">
+  <img src="https://raw.githubusercontent.com/0-Alchemist-0/Game_Consoles/main/Pics%26Videos/Games/0001_TicTacToe.jpeg" width="250">
+  <img src="https://raw.githubusercontent.com/0-Alchemist-0/Game_Consoles/main/Pics%26Videos/Games/0002_RPSLS.jpeg" width="250">
+  <img src="https://raw.githubusercontent.com/0-Alchemist-0/Game_Consoles/main/Pics%26Videos/Games/0003_Tanks.jpeg" width="250">
+  <img src="https://raw.githubusercontent.com/0-Alchemist-0/Game_Consoles/main/Pics%26Videos/Games/0004_Snake.jpeg" width="250">
+  <img src="https://raw.githubusercontent.com/0-Alchemist-0/Game_Consoles/main/Pics%26Videos/Games/0005_Breakout.jpeg" width="250">
+  <img src="https://raw.githubusercontent.com/0-Alchemist-0/Game_Consoles/main/Pics%26Videos/Games/0006_Pong.jpeg" width="250">
+  <img src="https://raw.githubusercontent.com/0-Alchemist-0/Game_Consoles/main/Pics%26Videos/Games/0007_RanchRush.jpeg" width="250">
+  <img src="https://raw.githubusercontent.com/0-Alchemist-0/Game_Consoles/main/Pics%26Videos/Games/0008_HexPipes.jpeg" width="250">
+  <img src="https://raw.githubusercontent.com/0-Alchemist-0/Game_Consoles/main/Pics%26Videos/Games/0009_Frogger.jpeg" width="250">
 </p>
 
 
