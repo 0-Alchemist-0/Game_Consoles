@@ -1,6 +1,9 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 8.8 - 2026-07-01 10:01 - Reworked Home Settings into Music and WiFi
+// subpages, with Music ON/OFF, SFX ON/OFF, editable Host IP, and persisted
+// default WiFi SSID selection.
 // Version 8.7 - 2026-07-01 09:49 - Added a looping non-game background
 // chiptune inspired by the attached arcade melody, with automatic mute during
 // gameplay and short audio cues taking priority.
@@ -217,8 +220,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 8.7";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V87-2026070109";
+const char *APP_VERSION_TEXT = "Version 8.8";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V88-2026070110";
 
 
 
@@ -293,6 +296,8 @@ Arduino_DataBus *bus = new Arduino_HWSPI(
 Arduino_GFX *gfx = new Arduino_ILI9488_18bit(bus, PIN_LCD_RST, 0, false);
 
 bool sdReady = false;
+bool musicEnabled = true;
+bool sfxEnabled = true;
 
 // ============================================================================
 // APP STATE
@@ -332,6 +337,8 @@ enum AppState {
   STATE_EMPTY_GAME,
   STATE_MENU,
   STATE_SETTINGS,
+  STATE_SETTINGS_MUSIC,
+  STATE_SETTINGS_WIFI,
   STATE_EXIT,
   STATE_HOST_SETUP,
   STATE_HOST_IP,
@@ -967,6 +974,35 @@ const int btnSettingsSaveY = 420;
 const int btnSettingsSaveW = 130;
 const int btnSettingsSaveH = 40;
 
+const int btnSettingsMusicX = 60;
+const int btnSettingsMusicY = 165;
+const int btnSettingsMusicW = 200;
+const int btnSettingsMusicH = 56;
+
+const int btnSettingsWifiX = 60;
+const int btnSettingsWifiY = 245;
+const int btnSettingsWifiW = 200;
+const int btnSettingsWifiH = 56;
+
+const int btnMusicToggleX = 45;
+const int btnMusicToggleY = 150;
+const int btnMusicToggleW = 230;
+const int btnMusicToggleH = 62;
+
+const int btnSfxToggleX = 45;
+const int btnSfxToggleY = 250;
+const int btnSfxToggleW = 230;
+const int btnSfxToggleH = 62;
+
+const int btnWifiPrevX = 12;
+const int btnWifiSsidY = 54;
+const int btnWifiPrevW = 62;
+const int btnWifiSsidX = 80;
+const int btnWifiSsidW = 160;
+const int btnWifiNextX = 246;
+const int btnWifiNextW = 62;
+const int btnWifiSsidH = 30;
+
 const int joinNetworkX = 20;
 const int joinNetworkY = 112;
 const int joinNetworkW = 280;
@@ -1346,7 +1382,14 @@ void loadNetworkSettings() {
   ipParts[1] = prefs.getUChar("ip1", 168);
   ipParts[2] = prefs.getUChar("ip2", 10);
   ipParts[3] = prefs.getUChar("ip3", 1);
+  selectedHostSSIDIndex = prefs.getUChar("ssid", 0);
   prefs.end();
+
+  if (selectedHostSSIDIndex < 0 || selectedHostSSIDIndex >= EPIC_SSID_COUNT) {
+    selectedHostSSIDIndex = 0;
+  }
+
+  hostSSIDListOffset = (selectedHostSSIDIndex / MAX_HOST_SSID_VISIBLE) * MAX_HOST_SSID_VISIBLE;
 
   updateIpTextFromParts();
   updateHostIpFromParts();
@@ -1360,6 +1403,21 @@ void saveNetworkSettings() {
   prefs.putUChar("ip1", ipParts[1]);
   prefs.putUChar("ip2", ipParts[2]);
   prefs.putUChar("ip3", ipParts[3]);
+  prefs.putUChar("ssid", (uint8_t)selectedHostSSIDIndex);
+  prefs.end();
+}
+
+void loadConsoleSettings() {
+  prefs.begin("console", true);
+  musicEnabled = prefs.getBool("music", true);
+  sfxEnabled = prefs.getBool("sfx", true);
+  prefs.end();
+}
+
+void saveConsoleSettings() {
+  prefs.begin("console", false);
+  prefs.putBool("music", musicEnabled);
+  prefs.putBool("sfx", sfxEnabled);
   prefs.end();
 }
 
@@ -1422,6 +1480,12 @@ void stopMenuMusic() {
 void updateMenuMusic() {
   unsigned long now = millis();
 
+  if (!musicEnabled) {
+    stopMenuMusic();
+    menuMusicIndex = 0;
+    return;
+  }
+
   if (isGameplayStateForMenuMusic()) {
     stopMenuMusic();
     menuMusicIndex = 0;
@@ -1458,6 +1522,8 @@ void updateMenuMusic() {
 }
 
 void playPriorityTone(uint16_t freq, uint16_t durationMs) {
+  if (!sfxEnabled) return;
+
   menuMusicActive = false;
   menuMusicMutedUntil = millis() + durationMs + 90;
   tone(PIN_BUZZER, freq, durationMs);
@@ -8238,13 +8304,71 @@ void drawSettingsScreen() {
   gfx->fillScreen(RGB565_BLACK);
 
   drawCenteredText("SETTINGS", 24, 3, RGB565_CYAN);
-  drawCenteredText("HOST IP", 62, 2, RGB565_YELLOW);
+  drawCenteredText("Choose category", 78, 2, RGB565_YELLOW);
 
+  drawButton(btnSettingsMusicX, btnSettingsMusicY, btnSettingsMusicW, btnSettingsMusicH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "MUSIC", 2);
+  drawButton(btnSettingsWifiX, btnSettingsWifiY, btnSettingsWifiW, btnSettingsWifiH,
+             RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "WiFi", 2);
+
+  drawButton(btnSettingsHomeX, btnSettingsHomeY, btnSettingsHomeW, btnSettingsHomeH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "HOME", 2);
+}
+
+void drawMusicSettingsScreen() {
+  appState = STATE_SETTINGS_MUSIC;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("MUSIC", 30, 3, RGB565_CYAN);
+  drawCenteredText("Audio options", 76, 2, RGB565_YELLOW);
+
+  drawButton(btnMusicToggleX, btnMusicToggleY, btnMusicToggleW, btnMusicToggleH,
+             musicEnabled ? RGB565_GREEN : RGB565_RED,
+             RGB565_WHITE,
+             musicEnabled ? RGB565_BLACK : RGB565_WHITE,
+             musicEnabled ? "MUSIC ON" : "MUSIC OFF",
+             2);
+
+  drawButton(btnSfxToggleX, btnSfxToggleY, btnSfxToggleW, btnSfxToggleH,
+             sfxEnabled ? RGB565_GREEN : RGB565_RED,
+             RGB565_WHITE,
+             sfxEnabled ? RGB565_BLACK : RGB565_WHITE,
+             sfxEnabled ? "SFX ON" : "SFX OFF",
+             2);
+
+  drawButton(btnSettingsHomeX, btnSettingsHomeY, btnSettingsHomeW, btnSettingsHomeH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
+}
+
+void drawSettingsWifiSelector() {
+  gfx->fillRect(0, btnWifiSsidY - 2, screenW, btnWifiSsidH + 4, RGB565_BLACK);
+
+  drawButton(btnWifiPrevX, btnWifiSsidY, btnWifiPrevW, btnWifiSsidH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "PREV", 1);
+
+  char ssidLabel[26];
+  snprintf(ssidLabel, sizeof(ssidLabel), "%d %s", selectedHostSSIDIndex + 1, epicSSIDList[selectedHostSSIDIndex]);
+  drawButton(btnWifiSsidX, btnWifiSsidY, btnWifiSsidW, btnWifiSsidH,
+             RGB565_BLACK, RGB565_CYAN, RGB565_WHITE, ssidLabel, 1);
+
+  drawButton(btnWifiNextX, btnWifiSsidY, btnWifiNextW, btnWifiSsidH,
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "NEXT", 1);
+}
+
+void drawWifiSettingsScreen() {
+  appState = STATE_SETTINGS_WIFI;
+  gfx->fillScreen(RGB565_BLACK);
+
+  drawCenteredText("WiFi", 18, 3, RGB565_CYAN);
+  drawCenteredText("Default Network", 42, 1, RGB565_YELLOW);
+  drawSettingsWifiSelector();
+
+  drawCenteredText("HOST IP", 78, 1, RGB565_YELLOW);
   drawIpFields();
   drawSettingsKeypad();
 
   drawButton(btnSettingsHomeX, btnSettingsHomeY, btnSettingsHomeW, btnSettingsHomeH,
-             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "HOME", 2);
+             RGB565_BLUE, RGB565_WHITE, RGB565_WHITE, "BACK", 2);
   drawButton(btnSettingsSaveX, btnSettingsSaveY, btnSettingsSaveW, btnSettingsSaveH,
              RGB565_GREEN, RGB565_WHITE, RGB565_BLACK, "SAVE", 2);
 }
@@ -10301,7 +10425,86 @@ void handleIpKeypadAction(int keyIndex) {
 }
 
 void handleSettingsTouch(int x, int y) {
-  // Settings uses the shared IP keypad and persists immediately on SAVE/HOME.
+  if (inRect(x, y, btnSettingsMusicX, btnSettingsMusicY, btnSettingsMusicW, btnSettingsMusicH)) {
+    beepClick();
+    drawMusicSettingsScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnSettingsWifiX, btnSettingsWifiY, btnSettingsWifiW, btnSettingsWifiH)) {
+    beepClick();
+    activeIpField = 0;
+    activeIpFieldNeedsClear = true;
+    updateIpTextFromParts();
+    drawWifiSettingsScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnSettingsHomeX, btnSettingsHomeY, btnSettingsHomeW, btnSettingsHomeH)) {
+    beepClick();
+    drawHomeScreen();
+    return;
+  }
+}
+
+void handleMusicSettingsTouch(int x, int y) {
+  if (inRect(x, y, btnMusicToggleX, btnMusicToggleY, btnMusicToggleW, btnMusicToggleH)) {
+    musicEnabled = !musicEnabled;
+    saveConsoleSettings();
+
+    if (!musicEnabled) {
+      stopMenuMusic();
+    } else {
+      menuMusicNextTime = 0;
+    }
+
+    beepClick();
+    drawMusicSettingsScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnSfxToggleX, btnSfxToggleY, btnSfxToggleW, btnSfxToggleH)) {
+    sfxEnabled = !sfxEnabled;
+    saveConsoleSettings();
+    beepClick();
+    drawMusicSettingsScreen();
+    return;
+  }
+
+  if (inRect(x, y, btnSettingsHomeX, btnSettingsHomeY, btnSettingsHomeW, btnSettingsHomeH)) {
+    beepClick();
+    drawSettingsScreen();
+    return;
+  }
+}
+
+void handleWifiSettingsTouch(int x, int y) {
+  if (inRect(x, y, btnWifiPrevX, btnWifiSsidY, btnWifiPrevW, btnWifiSsidH)) {
+    beepClick();
+    selectedHostSSIDIndex--;
+
+    if (selectedHostSSIDIndex < 0) {
+      selectedHostSSIDIndex = EPIC_SSID_COUNT - 1;
+    }
+
+    hostSSIDListOffset = (selectedHostSSIDIndex / MAX_HOST_SSID_VISIBLE) * MAX_HOST_SSID_VISIBLE;
+    drawSettingsWifiSelector();
+    return;
+  }
+
+  if (inRect(x, y, btnWifiNextX, btnWifiSsidY, btnWifiNextW, btnWifiSsidH)) {
+    beepClick();
+    selectedHostSSIDIndex++;
+
+    if (selectedHostSSIDIndex >= EPIC_SSID_COUNT) {
+      selectedHostSSIDIndex = 0;
+    }
+
+    hostSSIDListOffset = (selectedHostSSIDIndex / MAX_HOST_SSID_VISIBLE) * MAX_HOST_SSID_VISIBLE;
+    drawSettingsWifiSelector();
+    return;
+  }
+
   for (int i = 0; i < 4; i++) {
     int fieldX = settingsFieldX + i * (settingsFieldW + settingsFieldGap);
 
@@ -10334,14 +10537,14 @@ void handleSettingsTouch(int x, int y) {
     beepClick();
     saveNetworkSettings();
     activeIpFieldNeedsClear = true;
-    drawSettingsScreen();
+    drawWifiSettingsScreen();
     return;
   }
 
   if (inRect(x, y, btnSettingsHomeX, btnSettingsHomeY, btnSettingsHomeW, btnSettingsHomeH)) {
     beepClick();
     saveNetworkSettings();
-    drawHomeScreen();
+    drawSettingsScreen();
     return;
   }
 }
@@ -10634,6 +10837,10 @@ void handleTouch(int x, int y) {
     handleMenuTouch(x, y);
   } else if (appState == STATE_SETTINGS) {
     handleSettingsTouch(x, y);
+  } else if (appState == STATE_SETTINGS_MUSIC) {
+    handleMusicSettingsTouch(x, y);
+  } else if (appState == STATE_SETTINGS_WIFI) {
+    handleWifiSettingsTouch(x, y);
   } else if (appState == STATE_HOST_SETUP) {
     handleHostSetupTouch(x, y);
   } else if (appState == STATE_HOST_IP) {
@@ -10718,6 +10925,7 @@ void setup() {
   loadRanchRushScore();
   loadFroggerScore();
   loadNetworkSettings();
+  loadConsoleSettings();
   clearBoard();
   WiFi.mode(WIFI_OFF);
 
