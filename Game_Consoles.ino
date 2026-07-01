@@ -1,6 +1,9 @@
 // ============================================================================
 // CHANGELOG
 // ============================================================================
+// Version 8.7 - 2026-07-01 09:49 - Added a looping non-game background
+// chiptune inspired by the attached arcade melody, with automatic mute during
+// gameplay and short audio cues taking priority.
 // Version 8.6 - 2026-06-19 07:21 - Switched Frogger Host/Join to use the standard
 // WiFi TCP flow (same as Tic Tac Toe) instead of ESP-NOW.  Both players run
 // traffic locally, exchange frog-state/goal/over messages over TCP, and the
@@ -214,8 +217,8 @@ static const uint8_t FT6336_ADDR = 0x38;
 
 // Keep these in sync with the newest CHANGELOG entry.
 // Build ID format: GC-V<major><minor>-<YYYYMMDDHH>.
-const char *APP_VERSION_TEXT = "Version 8.6";
-const char *APP_BUILD_ID_TEXT = "Build ID GC-V86-2026061907";
+const char *APP_VERSION_TEXT = "Version 8.7";
+const char *APP_BUILD_ID_TEXT = "Build ID GC-V87-2026070109";
 
 
 
@@ -1363,12 +1366,109 @@ void saveNetworkSettings() {
 // ============================================================================
 // AUDIO
 // ============================================================================
+// Short audio cues and menu music all share the buzzer, so cue tones briefly
+// mute the menu loop instead of fighting it.
+struct MenuMusicNote {
+  uint16_t freq;
+  uint16_t durationMs;
+  uint16_t gapMs;
+};
+
+const MenuMusicNote menuMusic[] = {
+  {659, 115, 25}, {784, 115, 25}, {988, 145, 35}, {784, 95, 25},
+  {880, 115, 25}, {1047, 115, 25}, {1175, 155, 35}, {1047, 95, 25},
+  {988, 130, 25}, {880, 110, 25}, {784, 140, 35}, {0, 80, 20},
+  {523, 105, 25}, {659, 105, 25}, {784, 125, 25}, {988, 165, 45},
+  {1047, 120, 25}, {988, 105, 25}, {880, 120, 25}, {784, 160, 40},
+  {659, 120, 25}, {784, 120, 25}, {880, 120, 25}, {1047, 170, 45},
+  {1175, 105, 25}, {1319, 105, 25}, {1175, 120, 25}, {988, 165, 45},
+  {784, 120, 25}, {880, 120, 25}, {988, 120, 25}, {1319, 210, 80},
+  {0, 160, 30}
+};
+
+const int menuMusicNoteCount = sizeof(menuMusic) / sizeof(menuMusic[0]);
+int menuMusicIndex = 0;
+bool menuMusicActive = false;
+unsigned long menuMusicNextTime = 0;
+unsigned long menuMusicMutedUntil = 0;
+
+bool isGameplayStateForMenuMusic() {
+  switch (appState) {
+    case STATE_PLAYING:
+    case STATE_RPS_CHOICE_P1:
+    case STATE_RPS_CHOICE_P2:
+    case STATE_RPS_WAITING_CHOICE:
+    case STATE_PT_PLAYING:
+    case STATE_BREAKOUT_PLAYING:
+    case STATE_PONG_PLAYING:
+    case STATE_SNAKE_PLAYING:
+    case STATE_RR_PLAYING:
+    case STATE_FROGGER_PLAYING:
+      return true;
+    default:
+      return false;
+  }
+}
+
+void stopMenuMusic() {
+  if (menuMusicActive) {
+    noTone(PIN_BUZZER);
+    menuMusicActive = false;
+  }
+
+  menuMusicNextTime = millis() + 120;
+}
+
+void updateMenuMusic() {
+  unsigned long now = millis();
+
+  if (isGameplayStateForMenuMusic()) {
+    stopMenuMusic();
+    menuMusicIndex = 0;
+    return;
+  }
+
+  if (now < menuMusicMutedUntil) {
+    if (menuMusicActive) {
+      noTone(PIN_BUZZER);
+      menuMusicActive = false;
+    }
+
+    return;
+  }
+
+  if (now < menuMusicNextTime) return;
+
+  const MenuMusicNote &note = menuMusic[menuMusicIndex];
+
+  if (note.freq == 0) {
+    noTone(PIN_BUZZER);
+    menuMusicActive = false;
+  } else {
+    tone(PIN_BUZZER, note.freq, note.durationMs);
+    menuMusicActive = true;
+  }
+
+  menuMusicNextTime = now + note.durationMs + note.gapMs;
+  menuMusicIndex++;
+
+  if (menuMusicIndex >= menuMusicNoteCount) {
+    menuMusicIndex = 0;
+  }
+}
+
+void playPriorityTone(uint16_t freq, uint16_t durationMs) {
+  menuMusicActive = false;
+  menuMusicMutedUntil = millis() + durationMs + 90;
+  tone(PIN_BUZZER, freq, durationMs);
+}
+
 // Short audio cues. They are intentionally non-blocking tone() calls.
-void beepMove()  { tone(PIN_BUZZER, 1000, 40); }
-void beepStart() { tone(PIN_BUZZER, 1400, 70); }
-void beepWin()   { tone(PIN_BUZZER, 2200, 180); }
-void beepDraw()  { tone(PIN_BUZZER, 1200, 150); }
-void beepClick() { tone(PIN_BUZZER, 1600, 60); }
+void beepMove()  { playPriorityTone(1000, 40); }
+void beepStart() { playPriorityTone(1400, 70); }
+void beepWin()   { playPriorityTone(2200, 180); }
+void beepDraw()  { playPriorityTone(1200, 150); }
+void beepClick() { playPriorityTone(1600, 60); }
 
 // ============================================================================
 // TOUCH
@@ -6563,7 +6663,7 @@ void froggerDie() {
   frogAlive = false;
   frogDying = true;
   frogDeathTime = millis();
-  tone(PIN_BUZZER, 180, 200);
+  playPriorityTone(180, 200);
 
   int y = frogRowY[frogRow] + (FROG_LANE_H - FROG_H) / 2;
   int x = (int)frogX;
@@ -6716,7 +6816,7 @@ void checkFroggerCollisions() {
           frogHiScore = frogScore;
         }
 
-        tone(PIN_BUZZER, 1400, 80);
+        playPriorityTone(1400, 80);
         drawFroggerGoalSlots();
         landed = true;
         break;
@@ -6754,7 +6854,7 @@ void checkFroggerCollisions() {
       }
 
       initFroggerLanes();
-      tone(PIN_BUZZER, 1800, 100);
+      playPriorityTone(1800, 100);
       delay(300);
       drawFroggerFieldBg();
 
@@ -6903,25 +7003,25 @@ void moveFroggerFrog(int action) {
   if (action == 0) {
     if (frogX > 0) {
       frogX -= FROG_STEP_X;
-      tone(PIN_BUZZER, 800, 30);
+      playPriorityTone(800, 30);
     }
   } else if (action == 1) {
     if (frogRow < FROG_ROWS - 1) {
       frogRow++;
       frogScore++;
       frogJustJumped = true;
-      tone(PIN_BUZZER, 800, 30);
+      playPriorityTone(800, 30);
     }
   } else if (action == 2) {
     if (frogRow > 0) {
       frogRow--;
       frogJustJumped = true;
-      tone(PIN_BUZZER, 800, 30);
+      playPriorityTone(800, 30);
     }
   } else if (action == 3) {
     if (frogX < screenW - FROG_W) {
       frogX += FROG_STEP_X;
-      tone(PIN_BUZZER, 800, 30);
+      playPriorityTone(800, 30);
     }
   }
 
@@ -7109,7 +7209,7 @@ void froggerNetworkDie(int playerIndex) {
   if (!frogNetAlive[playerIndex] || frogNetGameOver) return;
 
   frogNetLives[playerIndex]--;
-  tone(PIN_BUZZER, 180, 120);
+  playPriorityTone(180, 120);
 
   if (frogNetLives[playerIndex] <= 0) {
     frogNetLives[playerIndex] = 0;
@@ -7238,7 +7338,7 @@ void checkFroggerNetworkPlayerCollisions(int playerIndex) {
         frogNetScore[playerIndex] += 50;
         landed = true;
         sendFroggerGoalClaim(goal);
-        tone(PIN_BUZZER, 1400, 60);
+        playPriorityTone(1400, 60);
         break;
       }
     }
@@ -7271,7 +7371,7 @@ void checkFroggerNetworkPlayerCollisions(int playerIndex) {
 
       initFroggerLanes();
       resetFroggerNetworkPlayers();
-      tone(PIN_BUZZER, 1800, 80);
+      playPriorityTone(1800, 80);
       return;
     }
 
@@ -7316,7 +7416,7 @@ void applyFroggerNetworkInput(int playerIndex, int action, bool localFeedback) {
   frogNetX[playerIndex] = constrain(frogNetX[playerIndex], 0.0f, (float)(screenW - FROG_W));
 
   if (moved && localFeedback) {
-    tone(PIN_BUZZER, 800, 30);
+    playPriorityTone(800, 30);
   }
 }
 
@@ -7677,7 +7777,7 @@ void processFroggerEspNow() {
       froggerEspNowAddPeer(mac);
 
       if (waitingForPeer) {
-        tone(PIN_BUZZER, 1200, 50);
+        playPriorityTone(1200, 50);
       }
 
       continue;
@@ -7789,7 +7889,7 @@ void startFroggerLocalGame() {
   appState = STATE_FROGGER_PLAYING;
   initFroggerLayout();
   resetFroggerGame();
-  tone(PIN_BUZZER, 900, 60);
+  playPriorityTone(900, 60);
   drawFroggerFullScene();
   frogLastFrame = millis();
 }
@@ -8794,7 +8894,7 @@ bool pocketTanksProjectileHitsTank(int projectileX, int projectileY, int tankInd
 
 void explodePocketTanksAt(int x, int y) {
   carvePocketTanksCrater(x, y);
-  tone(PIN_BUZZER, 900, 120);
+  playPriorityTone(900, 120);
   drawPocketTanksScene(-1, -1, true, x, y);
   delay(300);
 }
@@ -10664,6 +10764,8 @@ void loop() {
   if (!touched) {
     touchWasDown = false;
   }
+
+  updateMenuMusic();
 
   updateBreakoutGame();
   updatePongGame();
